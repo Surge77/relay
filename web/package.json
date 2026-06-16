@@ -1,0 +1,31 @@
+{
+  "name": "relay-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint .",
+    "test": "echo \"no web unit tests yet\" && exit 0"
+  },
+  "dependencies": {
+    "jose": "^5.9.6",
+    "next": "^16.1.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@next/eslint-plugin-next": "^16.1.0",
+    "@tailwindcss/postcss": "^4.0.0",
+    "@typescript-eslint/parser": "^8.18.0",
+    "@types/node": "^22.10.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "eslint": "^9.17.0",
+    "eslint-config-next": "^16.1.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.2"
+  }
+}
