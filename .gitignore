@@ -39,3 +39,9 @@ Thumbs.db
 # Test / coverage
 coverage.out
 coverage.html
+.gotmp/
+
+# Local dev artifacts
+.playwright-mcp/
+*.stackdump
+relay-running-*.png
