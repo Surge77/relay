@@ -47,22 +47,26 @@ func (r *Registry) Add(c Client) {
 	addToSet(r.byUser, c.UserID(), c.ID())
 }
 
-// Remove deregisters a connection and all its conversation subscriptions. Call
-// once when the socket closes.
-func (r *Registry) Remove(c Client) {
+// Remove deregisters a connection and all its conversation subscriptions. It
+// returns the conversations that have no remaining local subscriber after the
+// removal, so the caller can release their cross-node fan-out subscriptions.
+func (r *Registry) Remove(c Client) []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	connID := c.ID()
 	delete(r.byConn, connID)
 	removeFromSet(r.byUser, c.UserID(), connID)
+	var emptied []string
 	for conv, set := range r.byConv {
 		if _, ok := set[connID]; ok {
 			delete(set, connID)
 			if len(set) == 0 {
 				delete(r.byConv, conv)
+				emptied = append(emptied, conv)
 			}
 		}
 	}
+	return emptied
 }
 
 // Subscribe records that a connection is following a conversation, so locally

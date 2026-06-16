@@ -142,3 +142,5 @@ func (l *LocalFanout) Publish(_ context.Context, conversationID string, f protoc
 }
 
 func (l *LocalFanout) EnsureSubscribed(string) {}
+
+func (l *LocalFanout) Unsubscribe(string) {}

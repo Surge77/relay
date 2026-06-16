@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/Surge77/relay/gateway/internal/model"
@@ -23,7 +24,11 @@ func (h *Hub) OnConnect(c registry.Client) {
 // OnDisconnect deregisters the connection. If the user has no remaining local
 // connection, it clears presence and broadcasts offline.
 func (h *Hub) OnDisconnect(c registry.Client) {
-	h.reg.Remove(c)
+	emptied := h.reg.Remove(c)
+	// Release fan-out subscriptions for conversations no local client follows.
+	for _, conv := range emptied {
+		h.fan.Unsubscribe(conv)
+	}
 	if h.reg.HasLocalMember(c.UserID()) {
 		return // another tab is still open on this node
 	}
@@ -47,7 +52,9 @@ func (h *Hub) OnFrame(ctx context.Context, c registry.Client, f protocol.Frame) 
 		h.handleRead(ctx, c, f)
 	case protocol.TypePing:
 		octx, cancel := context.WithTimeout(ctx, opTimeout)
-		_ = h.presence.Refresh(octx, c.UserID())
+		if err := h.presence.Refresh(octx, c.UserID()); err != nil {
+			log.Printf("presence refresh for %s: %v", c.UserID(), err)
+		}
 		cancel()
 		c.Enqueue(protocol.Frame{Type: protocol.TypePong})
 	default:
@@ -63,12 +70,14 @@ func (h *Hub) broadcastPresence(ctx context.Context, userID, state string) {
 		return
 	}
 	for _, conv := range convs {
-		_ = h.fan.Publish(ctx, conv, protocol.Frame{
+		if err := h.fan.Publish(ctx, conv, protocol.Frame{
 			Type:           protocol.TypePresence,
 			ConversationID: conv,
 			UserID:         userID,
 			State:          state,
-		})
+		}); err != nil {
+			log.Printf("publish presence %s to %s: %v", userID, conv, err)
+		}
 	}
 }
 
@@ -87,12 +96,14 @@ func (h *Hub) handleRead(ctx context.Context, c registry.Client, f protocol.Fram
 		sendErr(c, protocol.CodeInternal, "could not record read receipt")
 		return
 	}
-	_ = h.fan.Publish(octx, f.ConversationID, protocol.Frame{
+	if err := h.fan.Publish(octx, f.ConversationID, protocol.Frame{
 		Type:           protocol.TypeReceipt,
 		ConversationID: f.ConversationID,
 		UserID:         c.UserID(),
 		Seq:            f.Seq,
-	})
+	}); err != nil {
+		log.Printf("publish receipt to %s: %v", f.ConversationID, err)
+	}
 }
 
 func (h *Hub) handleSend(ctx context.Context, c registry.Client, f protocol.Frame) {
@@ -201,12 +212,14 @@ func (h *Hub) handleTyping(ctx context.Context, c registry.Client, f protocol.Fr
 	}
 	octx, cancel := context.WithTimeout(ctx, opTimeout)
 	defer cancel()
-	_ = h.fan.Publish(octx, f.ConversationID, protocol.Frame{
+	if err := h.fan.Publish(octx, f.ConversationID, protocol.Frame{
 		Type:           protocol.TypeTyping,
 		ConversationID: f.ConversationID,
 		UserID:         c.UserID(),
 		State:          state,
-	})
+	}); err != nil {
+		log.Printf("publish typing to %s: %v", f.ConversationID, err)
+	}
 }
 
 // authorize checks membership and reports a FORBIDDEN error to the client on

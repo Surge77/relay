@@ -2,6 +2,7 @@ package ws
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -48,7 +49,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		OriginPatterns: s.originPatterns,
 	})
 	if err != nil {
-		return // Accept already wrote the error response
+		log.Printf("ws upgrade failed: %v", err) // Accept already wrote the response
+		return
 	}
 	wsc.SetReadLimit(s.maxMessageByte)
 
@@ -57,12 +59,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	s.handler.OnConnect(c)
-	defer s.handler.OnDisconnect(c)
-	defer close(c.closed)
 
-	go c.writePump(ctx)
+	// Sequenced teardown (not defer-ordered) to avoid racing a live Enqueue/Write
+	// against Close: stop the writer, reject further enqueues, wait for the writer
+	// to drain/exit, deregister, then close the socket.
+	writeDone := make(chan struct{})
+	go func() {
+		c.writePump(ctx)
+		close(writeDone)
+	}()
 	c.readPump(ctx, s.handler) // blocks until the connection ends
 
+	cancel()
+	close(c.closed)
+	<-writeDone
+	s.handler.OnDisconnect(c)
 	wsc.Close(websocket.StatusNormalClosure, "")
 }
 

@@ -46,6 +46,9 @@ type Presence interface {
 type Fanout interface {
 	Publish(ctx context.Context, conversationID string, f protocol.Frame) error
 	EnsureSubscribed(conversationID string)
+	// Unsubscribe releases this node's subscription once no local connection
+	// follows the conversation, preventing an unbounded goroutine/connection leak.
+	Unsubscribe(conversationID string)
 }
 
 // Persister durably records a message before it is fanned out live. Returning

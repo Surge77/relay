@@ -73,6 +73,17 @@ func (r *Redis) EnsureSubscribed(conversationID string) {
 	go r.consume(ctx, conversationID, pubsub)
 }
 
+// Unsubscribe stops receiving a conversation's frames and releases the
+// subscription goroutine + Redis connection. Idempotent.
+func (r *Redis) Unsubscribe(conversationID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if cancel, ok := r.subs[conversationID]; ok {
+		cancel()
+		delete(r.subs, conversationID)
+	}
+}
+
 func (r *Redis) consume(ctx context.Context, conversationID string, pubsub *redis.PubSub) {
 	defer pubsub.Close()
 	ch := pubsub.Channel()
