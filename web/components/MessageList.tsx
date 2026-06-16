@@ -2,12 +2,17 @@
 
 import { useEffect, useRef } from "react";
 import { useChatStore } from "@/lib/store";
+import type { ChatMessage } from "@/lib/protocol";
+
+// Stable empty reference so the selector never returns a fresh array (which would
+// make useSyncExternalStore see a new snapshot every render → infinite loop).
+const EMPTY: ChatMessage[] = [];
 
 // MessageList renders strictly by seq (not arrival order) and dedupes by seq —
 // the visible proof that ordering holds regardless of how messages raced across
 // nodes. Optimistic (pending) messages render greyed until their ack arrives.
 export function MessageList({ conversation, me }: { conversation: string; me: string }) {
-  const messages = useChatStore((s) => s.messages[conversation] ?? []);
+  const messages = useChatStore((s) => s.messages[conversation] ?? EMPTY);
   const bottom = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {

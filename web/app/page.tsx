@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useChatSocket } from "@/lib/useChatSocket";
 import { useChatStore } from "@/lib/store";
 import { ConnectionBadge } from "@/components/ConnectionBadge";
@@ -17,9 +17,16 @@ export default function Home() {
 }
 
 function Chat({ me, setMe }: { me: string; setMe: (u: string) => void }) {
-  const { send, sendTyping } = useChatSocket(me, CONVERSATION);
+  const { send, sendTyping, sendRead } = useChatSocket(me, CONVERSATION);
   const presence = useChatStore((s) => s.presence);
   const typing = useChatStore((s) => s.typing);
+  const cursor = useChatStore((s) => s.cursors[CONVERSATION] ?? 0);
+
+  // Mark messages read as the view catches up to the latest seq; the gateway
+  // persists last_read_seq and fans out a receipt to the other members.
+  useEffect(() => {
+    if (cursor > 0) sendRead(cursor);
+  }, [cursor, sendRead]);
 
   const typingUsers = useMemo(
     () => Object.entries(typing).filter(([u, t]) => t && u !== me).map(([u]) => u),
