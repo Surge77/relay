@@ -249,6 +249,8 @@ func (f *fakeStore) AttachmentByID(_ context.Context, _ string) (model.Attachmen
 	return model.Attachment{}, store.ErrNotFound
 }
 
+func (f *fakeStore) Ping(_ context.Context) error { return nil }
+
 type sessionEnvelope struct {
 	Success bool        `json:"success"`
 	Data    sessionResp `json:"data"`

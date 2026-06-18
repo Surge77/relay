@@ -34,6 +34,9 @@ func New(ctx context.Context, url string) (*Store, error) {
 // Close releases the pool.
 func (s *Store) Close() { s.pool.Close() }
 
+// Ping verifies database connectivity for readiness checks.
+func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
+
 // IsMember reports whether a user belongs to a conversation. Authorization for
 // every SEND/READ flows through here — membership is never trusted from the
 // client.

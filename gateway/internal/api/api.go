@@ -7,6 +7,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"expvar"
 	"io"
 	"net/http"
 	"time"
@@ -52,6 +53,8 @@ type DataStore interface {
 
 	InsertAttachment(ctx context.Context, a model.Attachment) (string, error)
 	AttachmentByID(ctx context.Context, id string) (model.Attachment, error)
+
+	Ping(ctx context.Context) error
 }
 
 // EventPublisher delivers control-plane frames to connected clients via the
@@ -125,7 +128,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
-	return s.withCORS(mux)
+	mux.HandleFunc("GET /readyz", s.handleReadyz)
+	mux.Handle("GET /debug/vars", expvar.Handler())
+	return withObservability(s.withCORS(mux))
 }
 
 // envelope is the shared API response shape: success carries data, failure
