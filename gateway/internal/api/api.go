@@ -13,6 +13,7 @@ import (
 
 	"github.com/Surge77/relay/gateway/internal/model"
 	"github.com/Surge77/relay/gateway/internal/protocol"
+	"github.com/Surge77/relay/gateway/internal/storage"
 )
 
 // maxBodyBytes caps a request body to keep JSON decoding bounded.
@@ -48,6 +49,9 @@ type DataStore interface {
 	RemoveBlock(ctx context.Context, blockerID, blockedID string) error
 	IsBlocked(ctx context.Context, a, b string) (bool, error)
 	SetMute(ctx context.Context, conversationID, userID string, until *time.Time) error
+
+	InsertAttachment(ctx context.Context, a model.Attachment) (string, error)
+	AttachmentByID(ctx context.Context, id string) (model.Attachment, error)
 }
 
 // EventPublisher delivers control-plane frames to connected clients via the
@@ -68,12 +72,13 @@ type Server struct {
 	secret  []byte
 	origins map[string]bool
 	events  EventPublisher
+	blob    storage.Storage // nil disables attachment endpoints
 }
 
 // NewServer wires the control plane. allowedOrigins are echoed back for CORS so
 // the browser can send credentials (the refresh cookie). A nil events publisher
-// disables realtime notification (handlers still mutate state).
-func NewServer(st DataStore, secret []byte, allowedOrigins []string, events EventPublisher) *Server {
+// disables realtime notification; a nil blob store disables attachments.
+func NewServer(st DataStore, secret []byte, allowedOrigins []string, events EventPublisher, blob storage.Storage) *Server {
 	origins := make(map[string]bool, len(allowedOrigins))
 	for _, o := range allowedOrigins {
 		origins[o] = true
@@ -81,7 +86,7 @@ func NewServer(st DataStore, secret []byte, allowedOrigins []string, events Even
 	if events == nil {
 		events = noopPublisher{}
 	}
-	return &Server{store: st, secret: secret, origins: origins, events: events}
+	return &Server{store: st, secret: secret, origins: origins, events: events, blob: blob}
 }
 
 // Routes returns the HTTP handler for the control plane.
@@ -113,6 +118,9 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /blocks/{userId}", s.requireAuth(http.HandlerFunc(s.handleBlock)))
 	mux.Handle("DELETE /blocks/{userId}", s.requireAuth(http.HandlerFunc(s.handleUnblock)))
 	mux.Handle("POST /conversations/{id}/mute", s.requireAuth(http.HandlerFunc(s.handleMute)))
+
+	mux.Handle("POST /conversations/{id}/attachments", s.requireAuth(http.HandlerFunc(s.handleUpload)))
+	mux.Handle("GET /attachments/{id}", s.requireAuth(http.HandlerFunc(s.handleDownload)))
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))

@@ -20,6 +20,7 @@ import (
 	"github.com/Surge77/relay/gateway/internal/api"
 	"github.com/Surge77/relay/gateway/internal/config"
 	"github.com/Surge77/relay/gateway/internal/events"
+	"github.com/Surge77/relay/gateway/internal/storage"
 	"github.com/Surge77/relay/gateway/internal/store"
 )
 
@@ -52,10 +53,18 @@ func main() {
 		log.Warn("redis url invalid; realtime events disabled", "err", err)
 	}
 
+	// Local-disk attachment storage (swap for S3 in prod). Disabled if it can't
+	// be created — uploads then return 501 rather than crashing the service.
+	uploadDir := getEnv("UPLOAD_DIR", "./uploads")
+	blob, err := storage.NewLocalDisk(uploadDir)
+	if err != nil {
+		log.Warn("attachment storage disabled", "err", err)
+	}
+
 	port := getEnvInt("API_PORT", 9000)
 	srv := &http.Server{
 		Addr:              ":" + strconv.Itoa(port),
-		Handler:           api.NewServer(st, cfg.JWTSecret, cfg.AllowedOrigins, publisher).Routes(),
+		Handler:           api.NewServer(st, cfg.JWTSecret, cfg.AllowedOrigins, publisher, blob).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
@@ -75,6 +84,13 @@ func main() {
 	defer cancel()
 	_ = srv.Shutdown(shutCtx)
 	log.Info("relay api stopped")
+}
+
+func getEnv(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
 
 func getEnvInt(key string, def int) int {

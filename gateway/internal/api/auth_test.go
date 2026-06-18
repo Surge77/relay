@@ -241,13 +241,21 @@ func (f *fakeStore) IsBlocked(_ context.Context, a, b string) (bool, error) {
 
 func (f *fakeStore) SetMute(_ context.Context, _, _ string, _ *time.Time) error { return nil }
 
+func (f *fakeStore) InsertAttachment(_ context.Context, _ model.Attachment) (string, error) {
+	return "att-1", nil
+}
+
+func (f *fakeStore) AttachmentByID(_ context.Context, _ string) (model.Attachment, error) {
+	return model.Attachment{}, store.ErrNotFound
+}
+
 type sessionEnvelope struct {
 	Success bool        `json:"success"`
 	Data    sessionResp `json:"data"`
 }
 
 func testServer() *Server {
-	return NewServer(newFakeStore(), []byte("test-secret-32-bytes-or-whatever"), []string{"http://localhost:3000"}, nil)
+	return NewServer(newFakeStore(), []byte("test-secret-32-bytes-or-whatever"), []string{"http://localhost:3000"}, nil, nil)
 }
 
 func do(t *testing.T, h http.Handler, method, path string, body any) *httptest.ResponseRecorder {

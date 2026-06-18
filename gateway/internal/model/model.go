@@ -58,3 +58,17 @@ type ConversationSummary struct {
 	UnreadCount int64
 	LastMessage *Message
 }
+
+// Attachment is an uploaded file's metadata; the bytes live in the Storage
+// backend under StorageKey.
+type Attachment struct {
+	ID             string
+	ConversationID string
+	UploaderID     string
+	Filename       string
+	ContentType    string
+	StorageKey     string
+	SizeBytes      int64
+	Width          int
+	Height         int
+}
