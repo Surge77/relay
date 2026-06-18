@@ -189,6 +189,14 @@ func (f *fakeStore) RenameConversation(_ context.Context, conv, name string) err
 	return nil
 }
 
+func (f *fakeStore) HistoryBefore(_ context.Context, _ string, _ int64, _ int) ([]model.Message, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) UnreadCount(_ context.Context, _, _ string) (int64, error) { return 0, nil }
+
+func (f *fakeStore) SetLastRead(_ context.Context, _, _ string, _ int64) error { return nil }
+
 type sessionEnvelope struct {
 	Success bool        `json:"success"`
 	Data    sessionResp `json:"data"`

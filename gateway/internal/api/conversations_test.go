@@ -103,6 +103,26 @@ func TestAddMember_RequiresManageRole(t *testing.T) {
 	}
 }
 
+func TestHistoryAndReadGates(t *testing.T) {
+	h := testServer().Routes()
+	a := signup(t, h, "a@b.com")
+	b := signup(t, h, "b@b.com")
+	convID := createChannel(t, h, a.AccessToken, "hist")
+
+	if got := doAuth(t, h, "GET", "/conversations/"+convID+"/messages", b.AccessToken, nil).Code; got != http.StatusForbidden {
+		t.Fatalf("non-member history=%d, want 403", got)
+	}
+	if got := doAuth(t, h, "GET", "/conversations/"+convID+"/messages", a.AccessToken, nil).Code; got != http.StatusOK {
+		t.Fatalf("member history=%d, want 200", got)
+	}
+	if got := doAuth(t, h, "POST", "/conversations/"+convID+"/read", a.AccessToken, map[string]any{}).Code; got != http.StatusBadRequest {
+		t.Fatalf("read without seq=%d, want 400", got)
+	}
+	if got := doAuth(t, h, "POST", "/conversations/"+convID+"/read", a.AccessToken, readReq{Seq: 5}).Code; got != http.StatusOK {
+		t.Fatalf("read with seq=%d, want 200", got)
+	}
+}
+
 func TestLeaveRemovesMembership(t *testing.T) {
 	h := testServer().Routes()
 	a := signup(t, h, "a@b.com")

@@ -36,6 +36,10 @@ type DataStore interface {
 	MemberRole(ctx context.Context, conversationID, userID string) (string, error)
 	RemoveMember(ctx context.Context, conversationID, userID string) error
 	RenameConversation(ctx context.Context, conversationID, name string) error
+
+	HistoryBefore(ctx context.Context, conversationID string, beforeSeq int64, limit int) ([]model.Message, error)
+	UnreadCount(ctx context.Context, conversationID, userID string) (int64, error)
+	SetLastRead(ctx context.Context, conversationID, userID string, seq int64) error
 }
 
 // Server holds the control-plane dependencies and builds the HTTP router.
@@ -72,6 +76,10 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("DELETE /conversations/{id}/members/{userId}", s.requireAuth(http.HandlerFunc(s.handleRemoveMember)))
 	mux.Handle("POST /conversations/{id}/leave", s.requireAuth(http.HandlerFunc(s.handleLeave)))
 	mux.Handle("POST /dms", s.requireAuth(http.HandlerFunc(s.handleCreateDM)))
+
+	mux.Handle("GET /conversations/{id}/messages", s.requireAuth(http.HandlerFunc(s.handleHistory)))
+	mux.Handle("GET /conversations/{id}/unread", s.requireAuth(http.HandlerFunc(s.handleUnread)))
+	mux.Handle("POST /conversations/{id}/read", s.requireAuth(http.HandlerFunc(s.handleRead)))
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
