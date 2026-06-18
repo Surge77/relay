@@ -9,6 +9,7 @@ import { ConnectionBadge } from "@/components/ConnectionBadge";
 import { MessageList } from "@/components/MessageList";
 import { Composer } from "@/components/Composer";
 import { Sidebar } from "@/components/Sidebar";
+import { Search } from "@/components/Search";
 import { AuthGate } from "@/components/AuthGate";
 
 export default function Home() {
@@ -50,6 +51,8 @@ function Chat() {
           <div className="text-sm font-medium">{user.display_name}</div>
           <div className="truncate text-xs text-neutral-500">{user.email}</div>
         </div>
+
+        <Search />
 
         <div className="min-h-0 flex-1 overflow-hidden">
           <Sidebar />
