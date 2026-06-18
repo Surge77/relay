@@ -4,14 +4,12 @@ import { useEffect, useMemo } from "react";
 import { useChatSocket } from "@/lib/useChatSocket";
 import { useChatStore } from "@/lib/store";
 import { useAuthStore, logout } from "@/lib/auth";
+import { useConvStore, convLabel } from "@/lib/conversations";
 import { ConnectionBadge } from "@/components/ConnectionBadge";
 import { MessageList } from "@/components/MessageList";
 import { Composer } from "@/components/Composer";
+import { Sidebar } from "@/components/Sidebar";
 import { AuthGate } from "@/components/AuthGate";
-
-// Phase 1 still uses the single seeded "general" channel; multi-conversation
-// sidebar + real member/presence lists arrive in the conversations phase.
-const CONVERSATION = "general";
 
 export default function Home() {
   return (
@@ -23,13 +21,21 @@ export default function Home() {
 
 function Chat() {
   const user = useAuthStore((s) => s.user)!;
-  const { send, sendTyping, sendRead } = useChatSocket(user.id, CONVERSATION);
+  const load = useConvStore((s) => s.load);
+  const activeId = useConvStore((s) => s.activeId);
+  const active = useConvStore((s) => s.conversations.find((c) => c.ID === activeId));
+
+  const { send, sendTyping, sendRead } = useChatSocket(user.id, activeId ?? "");
   const typing = useChatStore((s) => s.typing);
-  const cursor = useChatStore((s) => s.cursors[CONVERSATION] ?? 0);
+  const cursor = useChatStore((s) => (activeId ? (s.cursors[activeId] ?? 0) : 0));
 
   useEffect(() => {
-    if (cursor > 0) sendRead(cursor);
-  }, [cursor, sendRead]);
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    if (activeId && cursor > 0) sendRead(cursor);
+  }, [activeId, cursor, sendRead]);
 
   const typingUsers = useMemo(
     () => Object.entries(typing).filter(([u, t]) => t && u !== user.id).map(([u]) => u),
@@ -38,16 +44,15 @@ function Chat() {
 
   return (
     <div className="flex h-screen">
-      <aside className="w-56 shrink-0 border-r border-neutral-800 p-4 flex flex-col gap-4">
+      <aside className="flex w-64 shrink-0 flex-col gap-4 border-r border-neutral-800 p-4">
         <div>
           <div className="text-xs text-neutral-400">Signed in as</div>
           <div className="text-sm font-medium">{user.display_name}</div>
-          <div className="text-xs text-neutral-500 truncate">{user.email}</div>
+          <div className="truncate text-xs text-neutral-500">{user.email}</div>
         </div>
 
-        <div>
-          <div className="text-xs text-neutral-400 mb-2">Channels</div>
-          <div className="rounded-lg bg-neutral-800 px-3 py-2 text-sm"># {CONVERSATION}</div>
+        <div className="min-h-0 flex-1 overflow-hidden">
+          <Sidebar />
         </div>
 
         <div className="mt-auto space-y-3">
@@ -62,12 +67,22 @@ function Chat() {
       </aside>
 
       <main className="flex flex-1 flex-col">
-        <header className="border-b border-neutral-800 px-4 py-3 text-sm font-medium"># {CONVERSATION}</header>
-        <MessageList conversation={CONVERSATION} me={user.id} />
-        <div className="h-5 px-4 text-xs text-neutral-500">
-          {typingUsers.length > 0 ? `${typingUsers.join(", ")} typing…` : ""}
-        </div>
-        <Composer onSend={send} onTyping={sendTyping} />
+        {activeId && active ? (
+          <>
+            <header className="border-b border-neutral-800 px-4 py-3 text-sm font-medium">
+              {convLabel(active)}
+            </header>
+            <MessageList conversation={activeId} me={user.id} />
+            <div className="h-5 px-4 text-xs text-neutral-500">
+              {typingUsers.length > 0 ? `${typingUsers.join(", ")} typing…` : ""}
+            </div>
+            <Composer onSend={send} onTyping={sendTyping} />
+          </>
+        ) : (
+          <div className="flex flex-1 items-center justify-center text-sm text-neutral-600">
+            Select a conversation
+          </div>
+        )}
       </main>
     </div>
   );

@@ -26,15 +26,28 @@ interface UseChatSocket {
   sendRead: (seq: number) => void;
 }
 
-// useChatSocket owns the WebSocket lifecycle for one user + conversation: auth
-// handshake, exponential-backoff reconnect (capped, guarded against the
-// intentional-close race), and resume-by-cursor on every (re)open. It is the
-// single source of socket truth; React reads chat state from the store.
+// subscribe joins a conversation's live fan-out and asks for catch-up from the
+// client's last-acked seq. The gateway allows many subscriptions per socket, so
+// switching conversations never reopens the connection.
+function subscribe(socket: WebSocket, conversation: string) {
+  if (!conversation || socket.readyState !== WebSocket.OPEN) return;
+  const cursor = useChatStore.getState().cursors[conversation] ?? 0;
+  sendFrame(socket, { type: "subscribe", conversation_id: conversation, last_acked_seq: cursor });
+}
+
+// useChatSocket owns the WebSocket lifecycle for one user: auth handshake,
+// exponential-backoff reconnect (capped, guarded against the intentional-close
+// race), and resume-by-cursor on every (re)open. The active conversation can
+// change without reopening the socket — a fresh subscribe frame is sent instead.
+// It is the single source of socket truth; React reads chat state from the store.
 export function useChatSocket(user: string, conversation: string): UseChatSocket {
   const ws = useRef<WebSocket | null>(null);
   const backoff = useRef(1000);
   const isClosed = useRef(false);
   const pingTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Active conversation as a ref so send/typing/read and the open handler read
+  // the current value without rebuilding the socket on every switch.
+  const activeConv = useRef(conversation);
 
   const store = useChatStore;
 
@@ -61,8 +74,7 @@ export function useChatSocket(user: string, conversation: string): UseChatSocket
       if (!isCurrent()) return;
       backoff.current = 1000;
       store.getState().setStatus("connected");
-      const cursor = store.getState().cursors[conversation] ?? 0;
-      sendFrame(socket, { type: "subscribe", conversation_id: conversation, last_acked_seq: cursor });
+      subscribe(socket, activeConv.current);
       if (pingTimer.current) clearInterval(pingTimer.current);
       pingTimer.current = setInterval(() => sendFrame(socket, { type: "ping" }), PING_INTERVAL_MS);
     };
@@ -75,7 +87,7 @@ export function useChatSocket(user: string, conversation: string): UseChatSocket
       } catch {
         return; // ignore malformed frame
       }
-      handleFrame(conversation, frame);
+      handleFrame(frame);
     };
 
     socket.onclose = () => {
@@ -89,7 +101,7 @@ export function useChatSocket(user: string, conversation: string): UseChatSocket
     socket.onerror = () => socket.close();
     // scheduleReconnect is intentionally omitted from deps to avoid a TDZ cycle;
     // it is referenced only at call time, by which point it is initialized.
-  }, [user, conversation, store]);
+  }, [user, store]);
 
   const scheduleReconnect = useCallback(() => {
     if (isClosed.current) return;
@@ -107,12 +119,22 @@ export function useChatSocket(user: string, conversation: string): UseChatSocket
     };
   }, [connect]);
 
+  // Switching the active conversation re-subscribes on the existing socket
+  // instead of reconnecting; catch-up replays only the gap since this conv's
+  // cursor. The open handler covers the case where the socket isn't up yet.
+  useEffect(() => {
+    activeConv.current = conversation;
+    const socket = ws.current;
+    if (socket) subscribe(socket, conversation);
+  }, [conversation]);
+
   const send = useCallback(
     (body: string) => {
+      const conv = activeConv.current;
       const socket = ws.current;
-      if (!socket || socket.readyState !== WebSocket.OPEN) return;
+      if (!conv || !socket || socket.readyState !== WebSocket.OPEN) return;
       const clientMsgId = crypto.randomUUID();
-      store.getState().addOptimistic(conversation, {
+      store.getState().addOptimistic(conv, {
         seq: 0,
         senderId: user,
         clientMsgId,
@@ -120,30 +142,26 @@ export function useChatSocket(user: string, conversation: string): UseChatSocket
         ts: Date.now(),
         pending: true,
       });
-      sendFrame(socket, { type: "send", conversation_id: conversation, client_msg_id: clientMsgId, body });
+      sendFrame(socket, { type: "send", conversation_id: conv, client_msg_id: clientMsgId, body });
     },
-    [conversation, user, store],
+    [user, store],
   );
 
-  const sendTyping = useCallback(
-    (start: boolean) => {
-      const socket = ws.current;
-      if (socket?.readyState === WebSocket.OPEN) {
-        sendFrame(socket, { type: "typing", conversation_id: conversation, state: start ? "start" : "stop" });
-      }
-    },
-    [conversation],
-  );
+  const sendTyping = useCallback((start: boolean) => {
+    const conv = activeConv.current;
+    const socket = ws.current;
+    if (conv && socket?.readyState === WebSocket.OPEN) {
+      sendFrame(socket, { type: "typing", conversation_id: conv, state: start ? "start" : "stop" });
+    }
+  }, []);
 
-  const sendRead = useCallback(
-    (seq: number) => {
-      const socket = ws.current;
-      if (socket?.readyState === WebSocket.OPEN) {
-        sendFrame(socket, { type: "read", conversation_id: conversation, seq });
-      }
-    },
-    [conversation],
-  );
+  const sendRead = useCallback((seq: number) => {
+    const conv = activeConv.current;
+    const socket = ws.current;
+    if (conv && socket?.readyState === WebSocket.OPEN) {
+      sendFrame(socket, { type: "read", conversation_id: conv, seq });
+    }
+  }, []);
 
   return { send, sendTyping, sendRead };
 }
@@ -152,26 +170,31 @@ function sendFrame(socket: WebSocket, frame: Frame) {
   socket.send(JSON.stringify(frame));
 }
 
-function handleFrame(conversation: string, f: Frame) {
+// handleFrame routes a server frame to the store keyed by its own conversation_id
+// — a single socket may be subscribed to several conversations at once.
+function handleFrame(f: Frame) {
   const st = useChatStore.getState();
+  const conv = f.conversation_id ?? "";
   switch (f.type) {
     case "message":
-      st.applyMessage(conversation, {
-        seq: f.seq ?? 0,
-        senderId: f.sender_id ?? "",
-        clientMsgId: f.client_msg_id ?? "",
-        body: f.body ?? "",
-        ts: f.ts ?? Date.now(),
-        pending: false,
-      });
+      if (conv) {
+        st.applyMessage(conv, {
+          seq: f.seq ?? 0,
+          senderId: f.sender_id ?? "",
+          clientMsgId: f.client_msg_id ?? "",
+          body: f.body ?? "",
+          ts: f.ts ?? Date.now(),
+          pending: false,
+        });
+      }
       break;
     case "ack":
-      if (f.client_msg_id && typeof f.seq === "number") {
-        st.confirmAck(conversation, f.client_msg_id, f.seq);
+      if (conv && f.client_msg_id && typeof f.seq === "number") {
+        st.confirmAck(conv, f.client_msg_id, f.seq);
       }
       break;
     case "caughtup":
-      if (typeof f.seq === "number") st.setCursor(conversation, f.seq);
+      if (conv && typeof f.seq === "number") st.setCursor(conv, f.seq);
       break;
     case "presence":
       if (f.user_id) st.setPresence(f.user_id, f.state === "online");
@@ -180,7 +203,7 @@ function handleFrame(conversation: string, f: Frame) {
       if (f.user_id) st.setTyping(f.user_id, f.state === "start");
       break;
     case "receipt":
-      if (f.user_id && typeof f.seq === "number") st.setReceipt(conversation, f.user_id, f.seq);
+      if (conv && f.user_id && typeof f.seq === "number") st.setReceipt(conv, f.user_id, f.seq);
       break;
   }
 }
