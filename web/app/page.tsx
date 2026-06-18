@@ -76,7 +76,7 @@ function Chat() {
             <div className="h-5 px-4 text-xs text-neutral-500">
               {typingUsers.length > 0 ? `${typingUsers.join(", ")} typing…` : ""}
             </div>
-            <Composer onSend={send} onTyping={sendTyping} />
+            <Composer onSend={send} onTyping={sendTyping} placeholder={`Message ${convLabel(active)}`} />
           </>
         ) : (
           <div className="flex flex-1 items-center justify-center text-sm text-neutral-600">
