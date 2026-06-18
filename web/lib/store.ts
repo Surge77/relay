@@ -12,8 +12,10 @@ interface ChatState {
   // userId → online flag.
   presence: Record<string, boolean>;
   typing: Record<string, boolean>; // userId → typing in current conversation
+  receipts: Record<string, Record<string, number>>; // conv → userId → last read seq
 
   setStatus: (s: Status) => void;
+  setReceipt: (conv: string, userId: string, seq: number) => void;
   addOptimistic: (conv: string, m: ChatMessage) => void;
   applyMessage: (conv: string, m: ChatMessage) => void;
   confirmAck: (conv: string, clientMsgId: string, seq: number) => void;
@@ -42,8 +44,17 @@ export const useChatStore = create<ChatState>((set) => ({
   cursors: {},
   presence: {},
   typing: {},
+  receipts: {},
 
   setStatus: (s) => set({ status: s }),
+
+  setReceipt: (conv, userId, seq) =>
+    set((st) => ({
+      receipts: {
+        ...st.receipts,
+        [conv]: { ...(st.receipts[conv] ?? {}), [userId]: Math.max(st.receipts[conv]?.[userId] ?? 0, seq) },
+      },
+    })),
 
   addOptimistic: (conv, m) =>
     set((st) => ({ messages: { ...st.messages, [conv]: upsert(st.messages[conv] ?? [], m) } })),

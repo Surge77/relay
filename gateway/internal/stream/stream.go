@@ -91,8 +91,13 @@ func (c *Consumer) Run(ctx context.Context) error {
 		default:
 		}
 		if err := c.readBatch(ctx, ">"); err != nil && !errors.Is(err, context.Canceled) {
-			// Transient read error: brief backoff, then retry.
-			time.Sleep(c.block)
+			// Transient read error: brief backoff, then retry — but stay responsive
+			// to cancellation so shutdown isn't delayed by a full backoff interval.
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(c.block):
+			}
 		}
 	}
 }

@@ -29,15 +29,22 @@ type Store interface {
 	IsMember(ctx context.Context, userID, conversationID string) (bool, error)
 	HistoryAfter(ctx context.Context, conversationID string, afterSeq int64, limit int) ([]model.Message, error)
 	ConversationsOf(ctx context.Context, userID string) ([]string, error)
+	MembersOf(ctx context.Context, conversationID string) ([]string, error)
 	SetLastRead(ctx context.Context, conversationID, userID string, seq int64) error
+	EditMessage(ctx context.Context, conversationID string, seq int64, authorID, body string) error
+	SoftDeleteMessage(ctx context.Context, conversationID string, seq int64, authorID string) error
+	AddReaction(ctx context.Context, conversationID string, seq int64, userID, emoji string) error
+	RemoveReaction(ctx context.Context, conversationID string, seq int64, userID, emoji string) error
 }
 
 // Presence tracks online/offline state. Online is set on connect, refreshed by
-// heartbeats, and cleared on disconnect.
+// heartbeats, and cleared on disconnect. IsOnline backs the join-time snapshot so
+// a subscriber learns who is already present, not only who connects afterwards.
 type Presence interface {
 	Online(ctx context.Context, userID string) error
 	Refresh(ctx context.Context, userID string) error
 	Offline(ctx context.Context, userID string) error
+	IsOnline(ctx context.Context, userID string) (bool, error)
 }
 
 // Fanout routes a message to every node hosting an online member of a
@@ -46,6 +53,9 @@ type Presence interface {
 type Fanout interface {
 	Publish(ctx context.Context, conversationID string, f protocol.Frame) error
 	EnsureSubscribed(conversationID string)
+	// Unsubscribe releases this node's subscription once no local connection
+	// follows the conversation, preventing an unbounded goroutine/connection leak.
+	Unsubscribe(conversationID string)
 }
 
 // Persister durably records a message before it is fanned out live. Returning

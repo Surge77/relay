@@ -21,7 +21,9 @@ import (
 	"github.com/Surge77/relay/gateway/internal/devinfra"
 	"github.com/Surge77/relay/gateway/internal/fanout"
 	"github.com/Surge77/relay/gateway/internal/hub"
+	"github.com/Surge77/relay/gateway/internal/model"
 	"github.com/Surge77/relay/gateway/internal/presence"
+	"github.com/Surge77/relay/gateway/internal/push"
 	"github.com/Surge77/relay/gateway/internal/registry"
 	"github.com/Surge77/relay/gateway/internal/sequencer"
 	"github.com/Surge77/relay/gateway/internal/store"
@@ -93,7 +95,7 @@ func buildDevHub(reg *registry.Registry) (*hub.Hub, func(), error) {
 		mem.AddMember("general", u)
 	}
 	lf := devinfra.NewLocalFanout(nil)
-	h := hub.New(reg, devinfra.NewSequencer(), mem, lf, mem, presence.Noop{})
+	h := hub.New(reg, devinfra.NewSequencer(), mem, lf, mem, presence.NewMemory())
 	lf.SetDeliver(h.DeliverLocal)
 	return h, func() {}, nil
 }
@@ -123,8 +125,19 @@ func buildProdHub(ctx context.Context, cfg *config.Config, reg *registry.Registr
 	// durable record) before live fan-out, and an in-process consumer group
 	// drains the stream into Postgres history. Postgres persistence is idempotent,
 	// so the at-least-once consumer can safely re-deliver after a restart.
+	//
+	// Notifications ride this async drain (off the message hot path): after each
+	// message is persisted, offline members are pushed. A failing push never fails
+	// persistence.
+	pushSvc := push.NewService(pg, pres, push.LogNotifier{})
 	durableLog := stream.NewLog(rdb)
-	consumer := stream.NewConsumer(rdb, cfg.NodeID, pg.Persist)
+	consumer := stream.NewConsumer(rdb, cfg.NodeID, func(sctx context.Context, m model.Message) error {
+		if err := pg.Persist(sctx, m); err != nil {
+			return err
+		}
+		pushSvc.NotifyOfflineMembers(sctx, m)
+		return nil
+	})
 	go func() {
 		if err := consumer.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("stream consumer stopped: %v", err)

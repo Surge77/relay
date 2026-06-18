@@ -131,6 +131,96 @@ func TestConnect_BroadcastsPresence(t *testing.T) {
 	}
 }
 
+func TestEditDeleteReact_FanOutAndAuthor(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newTestHub("general", "alice", "bob")
+	alice := &fakeClient{id: "ca", user: "alice"}
+	bob := &fakeClient{id: "cb", user: "bob"}
+	h.OnConnect(alice)
+	h.OnConnect(bob)
+	h.OnFrame(ctx, alice, protocol.Frame{Type: protocol.TypeSubscribe, ConversationID: "general"})
+	h.OnFrame(ctx, bob, protocol.Frame{Type: protocol.TypeSubscribe, ConversationID: "general"})
+	h.OnFrame(ctx, alice, protocol.Frame{Type: protocol.TypeSend, ConversationID: "general", ClientMsgID: "m1", Body: "hi"})
+
+	// Author edit fans out message_edited.
+	h.OnFrame(ctx, alice, protocol.Frame{Type: protocol.TypeEdit, ConversationID: "general", Seq: 1, Body: "hi (edited)"})
+	if ed := framesOfType(bob.frames(), protocol.TypeMessageEdited); len(ed) != 1 || ed[0].Body != "hi (edited)" {
+		t.Fatalf("edited frames = %+v, want one with edited body", ed)
+	}
+	// Non-author edit is rejected with an error frame.
+	h.OnFrame(ctx, bob, protocol.Frame{Type: protocol.TypeEdit, ConversationID: "general", Seq: 1, Body: "hijack"})
+	if errs := framesOfType(bob.frames(), protocol.TypeError); len(errs) == 0 {
+		t.Fatal("non-author edit should produce an error frame")
+	}
+	// Reaction fans out to other members.
+	h.OnFrame(ctx, bob, protocol.Frame{Type: protocol.TypeReact, ConversationID: "general", Seq: 1, Emoji: "👍"})
+	if rx := framesOfType(alice.frames(), protocol.TypeReactionAdded); len(rx) != 1 || rx[0].Emoji != "👍" {
+		t.Fatalf("reaction frames = %+v, want one 👍", rx)
+	}
+	// Author delete fans out a tombstone.
+	h.OnFrame(ctx, alice, protocol.Frame{Type: protocol.TypeDelete, ConversationID: "general", Seq: 1})
+	if del := framesOfType(bob.frames(), protocol.TypeMessageDeleted); len(del) != 1 {
+		t.Fatalf("delete frames = %+v, want one tombstone", del)
+	}
+}
+
+func TestOnConnect_SubscribesToUserChannel(t *testing.T) {
+	h, _ := newTestHub("general", "alice")
+	alice := &fakeClient{id: "ca", user: "alice"}
+	h.OnConnect(alice)
+
+	// A control-plane frame published to alice's per-user channel must reach her
+	// connection — this is how REST-side events (member_added, etc.) are delivered.
+	h.DeliverLocal(protocol.UserChannel("alice"),
+		protocol.Frame{Type: protocol.TypeMemberAdded, ConversationID: "x", UserID: "alice"})
+
+	got := framesOfType(alice.frames(), protocol.TypeMemberAdded)
+	if len(got) != 1 || got[0].ConversationID != "x" {
+		t.Fatalf("alice user-channel frames = %+v, want one member_added for x", got)
+	}
+}
+
+func TestSubscribe_SendsPresenceSnapshot(t *testing.T) {
+	ctx := context.Background()
+	reg := registry.New()
+	store := devinfra.NewStore()
+	for _, u := range []string{"alice", "bob"} {
+		store.AddMember("general", u)
+	}
+	lf := devinfra.NewLocalFanout(nil)
+	h := New(reg, devinfra.NewSequencer(), store, lf, store, presence.NewMemory())
+	lf.SetDeliver(h.DeliverLocal)
+
+	// alice is online and subscribed first.
+	alice := &fakeClient{id: "ca", user: "alice"}
+	h.OnConnect(alice)
+	h.OnFrame(ctx, alice, protocol.Frame{Type: protocol.TypeSubscribe, ConversationID: "general"})
+
+	// bob joins AFTER alice. The bug was that bob would never learn alice is
+	// already online (he'd only see users who connect after him). The join-time
+	// snapshot must report both alice and bob (himself) as online.
+	bob := &fakeClient{id: "cb", user: "bob"}
+	h.OnConnect(bob)
+	h.OnFrame(ctx, bob, protocol.Frame{Type: protocol.TypeSubscribe, ConversationID: "general"})
+
+	pf := framesOfType(bob.frames(), protocol.TypePresence)
+	if !hasOnline(pf, "alice") {
+		t.Fatalf("bob presence = %+v, want alice online in join snapshot", pf)
+	}
+	if !hasOnline(pf, "bob") {
+		t.Fatalf("bob presence = %+v, want self online in join snapshot", pf)
+	}
+}
+
+func hasOnline(fs []protocol.Frame, user string) bool {
+	for _, f := range fs {
+		if f.UserID == user && f.State == protocol.StateOnline {
+			return true
+		}
+	}
+	return false
+}
+
 func TestSubscribe_ReplaysHistoryInOrder(t *testing.T) {
 	ctx := context.Background()
 	h, _ := newTestHub("general", "alice", "bob")

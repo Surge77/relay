@@ -1,6 +1,15 @@
 // Wire frames exchanged with the gateway. Mirrors gateway/internal/protocol.
 
-export type ClientFrameType = "send" | "subscribe" | "typing" | "read" | "ping";
+export type ClientFrameType =
+  | "send"
+  | "subscribe"
+  | "typing"
+  | "read"
+  | "ping"
+  | "edit"
+  | "delete"
+  | "react"
+  | "unreact";
 export type ServerFrameType =
   | "ack"
   | "message"
@@ -8,7 +17,15 @@ export type ServerFrameType =
   | "receipt"
   | "caughtup"
   | "pong"
-  | "error";
+  | "error"
+  | "conversation_created"
+  | "conversation_updated"
+  | "member_added"
+  | "member_removed"
+  | "message_edited"
+  | "message_deleted"
+  | "reaction_added"
+  | "reaction_removed";
 
 export interface Frame {
   type: ClientFrameType | ServerFrameType;
@@ -23,6 +40,9 @@ export interface Frame {
   ts?: number;
   code?: string;
   message?: string;
+  kind?: string;
+  name?: string;
+  actor_id?: string;
 }
 
 export interface ChatMessage {

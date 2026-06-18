@@ -3,10 +3,22 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { Frame } from "./protocol";
 import { useChatStore } from "./store";
+import { useAuthStore, refreshSession } from "./auth";
 
-const GATEWAY_WS = process.env.NEXT_PUBLIC_GATEWAY_WS ?? "ws://localhost:8080/ws";
+const DEFAULT_GATEWAY_WS = process.env.NEXT_PUBLIC_GATEWAY_WS ?? "ws://localhost:8080/ws";
 const MAX_BACKOFF_MS = 30_000;
 const PING_INTERVAL_MS = 10_000;
+
+// gatewayURL lets a single web origin drive any node: a ?gw=ws://host:port/ws
+// query param overrides the default, so two browser tabs can connect to two
+// different gateway nodes to demonstrate cross-node fan-out.
+function gatewayURL(): string {
+  if (typeof window !== "undefined") {
+    const override = new URLSearchParams(window.location.search).get("gw");
+    if (override) return override;
+  }
+  return DEFAULT_GATEWAY_WS;
+}
 
 interface UseChatSocket {
   send: (body: string) => void;
@@ -30,30 +42,44 @@ export function useChatSocket(user: string, conversation: string): UseChatSocket
     if (isClosed.current) return;
     store.getState().setStatus(ws.current ? "reconnecting" : "connecting");
 
-    let token: string;
-    try {
-      const res = await fetch(`/api/token?user=${encodeURIComponent(user)}`);
-      token = (await res.json()).token;
-      if (!token) throw new Error("no token");
-    } catch {
-      scheduleReconnect();
+    // Use the in-memory access token; if absent or stale, exchange the refresh
+    // cookie for a fresh one. A null result means we are not authenticated.
+    let token = useAuthStore.getState().accessToken;
+    if (!token) token = await refreshSession();
+    if (!token) {
+      store.getState().setStatus("down");
       return;
     }
+    if (isClosed.current) return; // unmounted while awaiting the token
 
-    const socket = new WebSocket(`${GATEWAY_WS}?token=${token}`);
+    const socket = new WebSocket(`${gatewayURL()}?token=${token}`);
     ws.current = socket;
+    // Ignore events from a socket that has since been superseded by a reconnect.
+    const isCurrent = () => ws.current === socket;
 
     socket.onopen = () => {
+      if (!isCurrent()) return;
       backoff.current = 1000;
       store.getState().setStatus("connected");
       const cursor = store.getState().cursors[conversation] ?? 0;
       sendFrame(socket, { type: "subscribe", conversation_id: conversation, last_acked_seq: cursor });
+      if (pingTimer.current) clearInterval(pingTimer.current);
       pingTimer.current = setInterval(() => sendFrame(socket, { type: "ping" }), PING_INTERVAL_MS);
     };
 
-    socket.onmessage = (ev) => handleFrame(conversation, JSON.parse(ev.data) as Frame);
+    socket.onmessage = (ev) => {
+      if (!isCurrent()) return;
+      let frame: Frame;
+      try {
+        frame = JSON.parse(ev.data) as Frame;
+      } catch {
+        return; // ignore malformed frame
+      }
+      handleFrame(conversation, frame);
+    };
 
     socket.onclose = () => {
+      if (!isCurrent()) return;
       if (pingTimer.current) clearInterval(pingTimer.current);
       if (isClosed.current) return;
       store.getState().setStatus("reconnecting");
@@ -61,6 +87,8 @@ export function useChatSocket(user: string, conversation: string): UseChatSocket
     };
 
     socket.onerror = () => socket.close();
+    // scheduleReconnect is intentionally omitted from deps to avoid a TDZ cycle;
+    // it is referenced only at call time, by which point it is initialized.
   }, [user, conversation, store]);
 
   const scheduleReconnect = useCallback(() => {
@@ -150,6 +178,9 @@ function handleFrame(conversation: string, f: Frame) {
       break;
     case "typing":
       if (f.user_id) st.setTyping(f.user_id, f.state === "start");
+      break;
+    case "receipt":
+      if (f.user_id && typeof f.seq === "number") st.setReceipt(conversation, f.user_id, f.seq);
       break;
   }
 }

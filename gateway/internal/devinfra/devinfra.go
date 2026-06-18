@@ -6,12 +6,16 @@ package devinfra
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"sync"
 
 	"github.com/Surge77/relay/gateway/internal/model"
 	"github.com/Surge77/relay/gateway/internal/protocol"
 )
+
+// errNotAuthor mirrors the production store's author-only guard for edit/delete.
+var errNotAuthor = errors.New("not the author")
 
 // Sequencer is an in-memory monotonic per-conversation counter.
 type Sequencer struct {
@@ -64,6 +68,18 @@ func (s *Store) IsMember(_ context.Context, userID, conversationID string) (bool
 	return ok, nil
 }
 
+// MembersOf returns every user in a conversation — backs the join-time presence
+// snapshot.
+func (s *Store) MembersOf(_ context.Context, conversationID string) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []string
+	for u := range s.members[conversationID] {
+		out = append(out, u)
+	}
+	return out, nil
+}
+
 // ConversationsOf returns every conversation the user is a member of.
 func (s *Store) ConversationsOf(_ context.Context, userID string) ([]string, error) {
 	s.mu.RLock()
@@ -95,6 +111,43 @@ func (s *Store) LastRead(conversationID, userID string) (int64, bool) {
 	v, ok := s.lastRead[conversationID+"|"+userID]
 	return v, ok
 }
+
+// EditMessage updates a message body in place (author only).
+func (s *Store) EditMessage(_ context.Context, conversationID string, seq int64, authorID, body string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.history[conversationID] {
+		if s.history[conversationID][i].Seq == seq {
+			if s.history[conversationID][i].SenderID != authorID {
+				return errNotAuthor
+			}
+			s.history[conversationID][i].Body = body
+			return nil
+		}
+	}
+	return errNotAuthor
+}
+
+// SoftDeleteMessage blanks a message body in place (author only).
+func (s *Store) SoftDeleteMessage(_ context.Context, conversationID string, seq int64, authorID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.history[conversationID] {
+		if s.history[conversationID][i].Seq == seq {
+			if s.history[conversationID][i].SenderID != authorID {
+				return errNotAuthor
+			}
+			s.history[conversationID][i].Body = ""
+			return nil
+		}
+	}
+	return errNotAuthor
+}
+
+// AddReaction / RemoveReaction are no-ops in the in-memory dev store; reactions
+// are ephemeral and only matter against the production store.
+func (s *Store) AddReaction(context.Context, string, int64, string, string) error    { return nil }
+func (s *Store) RemoveReaction(context.Context, string, int64, string, string) error { return nil }
 
 func (s *Store) Persist(_ context.Context, m model.Message) error {
 	s.mu.Lock()
@@ -142,3 +195,5 @@ func (l *LocalFanout) Publish(_ context.Context, conversationID string, f protoc
 }
 
 func (l *LocalFanout) EnsureSubscribed(string) {}
+
+func (l *LocalFanout) Unsubscribe(string) {}

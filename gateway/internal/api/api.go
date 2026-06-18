@@ -1,0 +1,176 @@
+// Package api is the REST control plane: authentication today, and (in later
+// phases) conversations, profiles, search, and uploads. It shares the Postgres
+// store and auth packages with the realtime gateway but runs as its own service,
+// so the stateless control plane scales independently of the socket fleet.
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"expvar"
+	"io"
+	"net/http"
+	"time"
+
+	"github.com/Surge77/relay/gateway/internal/model"
+	"github.com/Surge77/relay/gateway/internal/protocol"
+	"github.com/Surge77/relay/gateway/internal/storage"
+)
+
+// maxBodyBytes caps a request body to keep JSON decoding bounded.
+const maxBodyBytes = 1 << 20
+
+// DataStore is the persistence surface the control plane needs. Defined here
+// (where it is consumed) so handlers can be unit-tested with a fake; *store.Store
+// satisfies it.
+type DataStore interface {
+	CreateUser(ctx context.Context, u model.User) error
+	UserByEmail(ctx context.Context, email string) (model.User, error)
+	UserByID(ctx context.Context, id string) (model.User, error)
+	InsertRefreshToken(ctx context.Context, userID, tokenHash string, expiresAt time.Time, userAgent string) error
+	RefreshTokenByHash(ctx context.Context, tokenHash string) (model.RefreshToken, error)
+	RevokeRefreshToken(ctx context.Context, tokenHash string) error
+	AddMember(ctx context.Context, conversationID, userID string) error
+
+	CreateConversation(ctx context.Context, c model.Conversation) error
+	GetOrCreateDM(ctx context.Context, userA, userB string) (model.Conversation, error)
+	ListConversationsFor(ctx context.Context, userID string) ([]model.ConversationSummary, error)
+	ConversationDetail(ctx context.Context, conversationID string) (model.Conversation, []model.Member, error)
+	MemberRole(ctx context.Context, conversationID, userID string) (string, error)
+	RemoveMember(ctx context.Context, conversationID, userID string) error
+	RenameConversation(ctx context.Context, conversationID, name string) error
+
+	HistoryBefore(ctx context.Context, conversationID string, beforeSeq int64, limit int) ([]model.Message, error)
+	UnreadCount(ctx context.Context, conversationID, userID string) (int64, error)
+	SetLastRead(ctx context.Context, conversationID, userID string, seq int64) error
+	SearchMessages(ctx context.Context, userID, query string, limit int) ([]model.Message, error)
+
+	UpdateProfile(ctx context.Context, userID, displayName, statusText, avatarURL string) error
+	AddBlock(ctx context.Context, blockerID, blockedID string) error
+	RemoveBlock(ctx context.Context, blockerID, blockedID string) error
+	IsBlocked(ctx context.Context, a, b string) (bool, error)
+	SetMute(ctx context.Context, conversationID, userID string, until *time.Time) error
+
+	InsertAttachment(ctx context.Context, a model.Attachment) (string, error)
+	AttachmentByID(ctx context.Context, id string) (model.Attachment, error)
+
+	SavePushSubscription(ctx context.Context, userID, endpoint, p256dh, auth string) error
+	DeletePushSubscription(ctx context.Context, userID, endpoint string) error
+
+	Ping(ctx context.Context) error
+}
+
+// EventPublisher delivers control-plane frames to connected clients via the
+// realtime fan-out. A nil publisher is replaced with a no-op.
+type EventPublisher interface {
+	ToConversation(ctx context.Context, conversationID string, f protocol.Frame) error
+	ToUser(ctx context.Context, userID string, f protocol.Frame) error
+}
+
+type noopPublisher struct{}
+
+func (noopPublisher) ToConversation(context.Context, string, protocol.Frame) error { return nil }
+func (noopPublisher) ToUser(context.Context, string, protocol.Frame) error         { return nil }
+
+// Server holds the control-plane dependencies and builds the HTTP router.
+type Server struct {
+	store   DataStore
+	secret  []byte
+	origins map[string]bool
+	events  EventPublisher
+	blob    storage.Storage // nil disables attachment endpoints
+}
+
+// NewServer wires the control plane. allowedOrigins are echoed back for CORS so
+// the browser can send credentials (the refresh cookie). A nil events publisher
+// disables realtime notification; a nil blob store disables attachments.
+func NewServer(st DataStore, secret []byte, allowedOrigins []string, events EventPublisher, blob storage.Storage) *Server {
+	origins := make(map[string]bool, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		origins[o] = true
+	}
+	if events == nil {
+		events = noopPublisher{}
+	}
+	return &Server{store: st, secret: secret, origins: origins, events: events, blob: blob}
+}
+
+// Routes returns the HTTP handler for the control plane.
+func (s *Server) Routes() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /auth/signup", s.handleSignup)
+	mux.HandleFunc("POST /auth/login", s.handleLogin)
+	mux.HandleFunc("POST /auth/refresh", s.handleRefresh)
+	mux.HandleFunc("POST /auth/logout", s.handleLogout)
+	mux.Handle("GET /auth/me", s.requireAuth(http.HandlerFunc(s.handleMe)))
+
+	mux.Handle("POST /conversations", s.requireAuth(http.HandlerFunc(s.handleCreateConversation)))
+	mux.Handle("GET /conversations", s.requireAuth(http.HandlerFunc(s.handleListConversations)))
+	mux.Handle("GET /conversations/{id}", s.requireAuth(http.HandlerFunc(s.handleGetConversation)))
+	mux.Handle("PATCH /conversations/{id}", s.requireAuth(http.HandlerFunc(s.handleRenameConversation)))
+	mux.Handle("POST /conversations/{id}/members", s.requireAuth(http.HandlerFunc(s.handleAddMember)))
+	mux.Handle("DELETE /conversations/{id}/members/{userId}", s.requireAuth(http.HandlerFunc(s.handleRemoveMember)))
+	mux.Handle("POST /conversations/{id}/leave", s.requireAuth(http.HandlerFunc(s.handleLeave)))
+	mux.Handle("POST /dms", s.requireAuth(http.HandlerFunc(s.handleCreateDM)))
+
+	mux.Handle("GET /conversations/{id}/messages", s.requireAuth(http.HandlerFunc(s.handleHistory)))
+	mux.Handle("GET /conversations/{id}/unread", s.requireAuth(http.HandlerFunc(s.handleUnread)))
+	mux.Handle("POST /conversations/{id}/read", s.requireAuth(http.HandlerFunc(s.handleRead)))
+
+	mux.Handle("GET /search", s.requireAuth(http.HandlerFunc(s.handleSearch)))
+
+	mux.Handle("GET /users/{id}", s.requireAuth(http.HandlerFunc(s.handleGetUser)))
+	mux.Handle("PATCH /users/me", s.requireAuth(http.HandlerFunc(s.handleUpdateProfile)))
+	mux.Handle("POST /blocks/{userId}", s.requireAuth(http.HandlerFunc(s.handleBlock)))
+	mux.Handle("DELETE /blocks/{userId}", s.requireAuth(http.HandlerFunc(s.handleUnblock)))
+	mux.Handle("POST /conversations/{id}/mute", s.requireAuth(http.HandlerFunc(s.handleMute)))
+
+	mux.Handle("POST /conversations/{id}/attachments", s.requireAuth(http.HandlerFunc(s.handleUpload)))
+	mux.Handle("GET /attachments/{id}", s.requireAuth(http.HandlerFunc(s.handleDownload)))
+
+	mux.Handle("POST /push/subscribe", s.requireAuth(http.HandlerFunc(s.handlePushSubscribe)))
+	mux.Handle("DELETE /push/subscribe", s.requireAuth(http.HandlerFunc(s.handlePushUnsubscribe)))
+
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("GET /readyz", s.handleReadyz)
+	mux.Handle("GET /debug/vars", expvar.Handler())
+	return withObservability(s.withCORS(mux))
+}
+
+// envelope is the shared API response shape: success carries data, failure
+// carries a user-safe error code + message. Internal detail is never leaked.
+type envelope struct {
+	Success   bool      `json:"success"`
+	Data      any       `json:"data,omitempty"`
+	Error     *apiError `json:"error,omitempty"`
+	Timestamp string    `json:"timestamp"`
+}
+
+type apiError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+func writeJSON(w http.ResponseWriter, status int, data any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(envelope{Success: true, Data: data, Timestamp: nowRFC3339()})
+}
+
+func writeErr(w http.ResponseWriter, status int, code, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(envelope{
+		Success: false, Error: &apiError{Code: code, Message: msg}, Timestamp: nowRFC3339(),
+	})
+}
+
+func decodeJSON(r *http.Request, dst any) error {
+	dec := json.NewDecoder(io.LimitReader(r.Body, maxBodyBytes))
+	dec.DisallowUnknownFields()
+	return dec.Decode(dst)
+}
+
+func nowRFC3339() string { return time.Now().UTC().Format(time.RFC3339) }

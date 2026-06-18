@@ -67,10 +67,29 @@ func (r *Redis) EnsureSubscribed(conversationID string) {
 		return
 	}
 	ctx, cancel := context.WithCancel(r.baseCtx)
-	r.subs[conversationID] = cancel
-
 	pubsub := r.rdb.Subscribe(ctx, channel(conversationID))
+	// Wait for the SUBSCRIBE to be acknowledged before returning. Without this,
+	// a frame published in the window between Subscribe() and the consume loop
+	// starting could be missed; the caller (handleSubscribe) then replays history
+	// believing live delivery is already active. Confirming closes that gap.
+	if _, err := pubsub.Receive(ctx); err != nil {
+		_ = pubsub.Close()
+		cancel()
+		return
+	}
+	r.subs[conversationID] = cancel
 	go r.consume(ctx, conversationID, pubsub)
+}
+
+// Unsubscribe stops receiving a conversation's frames and releases the
+// subscription goroutine + Redis connection. Idempotent.
+func (r *Redis) Unsubscribe(conversationID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if cancel, ok := r.subs[conversationID]; ok {
+		cancel()
+		delete(r.subs, conversationID)
+	}
 }
 
 func (r *Redis) consume(ctx context.Context, conversationID string, pubsub *redis.PubSub) {

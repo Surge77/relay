@@ -34,6 +34,9 @@ func New(ctx context.Context, url string) (*Store, error) {
 // Close releases the pool.
 func (s *Store) Close() { s.pool.Close() }
 
+// Ping verifies database connectivity for readiness checks.
+func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
+
 // IsMember reports whether a user belongs to a conversation. Authorization for
 // every SEND/READ flows through here — membership is never trusted from the
 // client.
@@ -67,6 +70,40 @@ func (s *Store) ConversationsOf(ctx context.Context, userID string) ([]string, e
 		out = append(out, id)
 	}
 	return out, rows.Err()
+}
+
+// MembersOf returns every user belonging to a conversation. Used to build the
+// join-time presence snapshot a subscriber receives.
+func (s *Store) MembersOf(ctx context.Context, conversationID string) ([]string, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT user_id FROM memberships WHERE conversation_id=$1`, conversationID)
+	if err != nil {
+		return nil, fmt.Errorf("members of: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan member: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// AddMember adds a user to a conversation, idempotently. Roles and invite flows
+// arrive in the conversation-management phase; for now new signups auto-join the
+// seeded "general" channel so the chat works end-to-end.
+func (s *Store) AddMember(ctx context.Context, conversationID, userID string) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO memberships (conversation_id, user_id) VALUES ($1, $2)
+		 ON CONFLICT (conversation_id, user_id) DO NOTHING`,
+		conversationID, userID)
+	if err != nil {
+		return fmt.Errorf("add member: %w", err)
+	}
+	return nil
 }
 
 // SetLastRead advances a member's read cursor, never moving it backwards.
