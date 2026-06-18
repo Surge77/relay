@@ -63,6 +63,64 @@ func (s *Store) scanUser(ctx context.Context, q, arg string) (model.User, error)
 	return u, nil
 }
 
+// UpdateProfile updates a user's editable profile fields. Display name is only
+// changed when a non-empty value is supplied; status and avatar are set as given.
+func (s *Store) UpdateProfile(ctx context.Context, userID, displayName, statusText, avatarURL string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE users SET display_name=COALESCE(NULLIF($2,''), display_name),
+		    status_text=$3, avatar_url=NULLIF($4,''), updated_at=now() WHERE id=$1`,
+		userID, displayName, statusText, avatarURL)
+	if err != nil {
+		return fmt.Errorf("update profile: %w", err)
+	}
+	return nil
+}
+
+// AddBlock records that blocker has blocked blocked (idempotent).
+func (s *Store) AddBlock(ctx context.Context, blockerID, blockedID string) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO blocks (blocker_id, blocked_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+		blockerID, blockedID)
+	if err != nil {
+		return fmt.Errorf("add block: %w", err)
+	}
+	return nil
+}
+
+// RemoveBlock removes a block.
+func (s *Store) RemoveBlock(ctx context.Context, blockerID, blockedID string) error {
+	_, err := s.pool.Exec(ctx,
+		`DELETE FROM blocks WHERE blocker_id=$1 AND blocked_id=$2`, blockerID, blockedID)
+	if err != nil {
+		return fmt.Errorf("remove block: %w", err)
+	}
+	return nil
+}
+
+// IsBlocked reports whether either user has blocked the other.
+func (s *Store) IsBlocked(ctx context.Context, a, b string) (bool, error) {
+	var exists bool
+	err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM blocks
+		   WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1))`,
+		a, b).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("is blocked: %w", err)
+	}
+	return exists, nil
+}
+
+// SetMute sets (or clears, when until is nil) a member's mute expiry.
+func (s *Store) SetMute(ctx context.Context, conversationID, userID string, until *time.Time) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE memberships SET muted_until=$3 WHERE conversation_id=$1 AND user_id=$2`,
+		conversationID, userID, until)
+	if err != nil {
+		return fmt.Errorf("set mute: %w", err)
+	}
+	return nil
+}
+
 // InsertRefreshToken records a newly issued refresh token (by hash).
 func (s *Store) InsertRefreshToken(ctx context.Context, userID, tokenHash string, expiresAt time.Time, userAgent string) error {
 	_, err := s.pool.Exec(ctx,

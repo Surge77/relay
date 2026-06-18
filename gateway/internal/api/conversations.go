@@ -84,6 +84,10 @@ func (s *Server) handleCreateDM(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "NOT_FOUND", "user not found")
 		return
 	}
+	if blocked, _ := s.store.IsBlocked(r.Context(), actor, req.UserID); blocked {
+		writeErr(w, http.StatusForbidden, "BLOCKED", "cannot message this user")
+		return
+	}
 	c, err := s.store.GetOrCreateDM(r.Context(), actor, req.UserID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "INTERNAL", "could not open direct message")

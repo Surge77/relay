@@ -42,6 +42,12 @@ type DataStore interface {
 	UnreadCount(ctx context.Context, conversationID, userID string) (int64, error)
 	SetLastRead(ctx context.Context, conversationID, userID string, seq int64) error
 	SearchMessages(ctx context.Context, userID, query string, limit int) ([]model.Message, error)
+
+	UpdateProfile(ctx context.Context, userID, displayName, statusText, avatarURL string) error
+	AddBlock(ctx context.Context, blockerID, blockedID string) error
+	RemoveBlock(ctx context.Context, blockerID, blockedID string) error
+	IsBlocked(ctx context.Context, a, b string) (bool, error)
+	SetMute(ctx context.Context, conversationID, userID string, until *time.Time) error
 }
 
 // EventPublisher delivers control-plane frames to connected clients via the
@@ -101,6 +107,12 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /conversations/{id}/read", s.requireAuth(http.HandlerFunc(s.handleRead)))
 
 	mux.Handle("GET /search", s.requireAuth(http.HandlerFunc(s.handleSearch)))
+
+	mux.Handle("GET /users/{id}", s.requireAuth(http.HandlerFunc(s.handleGetUser)))
+	mux.Handle("PATCH /users/me", s.requireAuth(http.HandlerFunc(s.handleUpdateProfile)))
+	mux.Handle("POST /blocks/{userId}", s.requireAuth(http.HandlerFunc(s.handleBlock)))
+	mux.Handle("DELETE /blocks/{userId}", s.requireAuth(http.HandlerFunc(s.handleUnblock)))
+	mux.Handle("POST /conversations/{id}/mute", s.requireAuth(http.HandlerFunc(s.handleMute)))
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))

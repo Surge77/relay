@@ -26,6 +26,7 @@ type fakeStore struct {
 	convs   map[string]model.Conversation
 	members map[string]map[string]string // conversationID -> userID -> role
 	dms     map[string]string            // dmKey -> conversationID
+	blocks  map[string]bool              // "blocker|blocked" -> true
 }
 
 func newFakeStore() *fakeStore {
@@ -36,6 +37,7 @@ func newFakeStore() *fakeStore {
 		convs:   map[string]model.Conversation{},
 		members: map[string]map[string]string{},
 		dms:     map[string]string{},
+		blocks:  map[string]bool{},
 	}
 }
 
@@ -200,6 +202,44 @@ func (f *fakeStore) SetLastRead(_ context.Context, _, _ string, _ int64) error {
 func (f *fakeStore) SearchMessages(_ context.Context, _, _ string, _ int) ([]model.Message, error) {
 	return nil, nil
 }
+
+func (f *fakeStore) UpdateProfile(_ context.Context, userID, displayName, statusText, avatarURL string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	u := f.byID[userID]
+	if displayName != "" {
+		u.DisplayName = displayName
+	}
+	u.StatusText = statusText
+	u.AvatarURL = avatarURL
+	f.byID[userID] = u
+	if u.Email != "" {
+		f.byEmail[u.Email] = u
+	}
+	return nil
+}
+
+func (f *fakeStore) AddBlock(_ context.Context, blocker, blocked string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.blocks[blocker+"|"+blocked] = true
+	return nil
+}
+
+func (f *fakeStore) RemoveBlock(_ context.Context, blocker, blocked string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.blocks, blocker+"|"+blocked)
+	return nil
+}
+
+func (f *fakeStore) IsBlocked(_ context.Context, a, b string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.blocks[a+"|"+b] || f.blocks[b+"|"+a], nil
+}
+
+func (f *fakeStore) SetMute(_ context.Context, _, _ string, _ *time.Time) error { return nil }
 
 type sessionEnvelope struct {
 	Success bool        `json:"success"`

@@ -123,6 +123,27 @@ func TestHistoryAndReadGates(t *testing.T) {
 	}
 }
 
+func TestBlockPreventsDM(t *testing.T) {
+	h := testServer().Routes()
+	a := signup(t, h, "a@b.com")
+	b := signup(t, h, "b@b.com")
+
+	if got := doAuth(t, h, "POST", "/blocks/"+b.User.ID, a.AccessToken, nil).Code; got != http.StatusOK {
+		t.Fatalf("block code=%d", got)
+	}
+	if got := doAuth(t, h, "POST", "/dms", a.AccessToken, createDMReq{UserID: b.User.ID}).Code; got != http.StatusForbidden {
+		t.Fatalf("DM after block code=%d, want 403", got)
+	}
+	// Block is bidirectional: b also cannot DM a.
+	if got := doAuth(t, h, "POST", "/dms", b.AccessToken, createDMReq{UserID: a.User.ID}).Code; got != http.StatusForbidden {
+		t.Fatalf("reverse DM code=%d, want 403", got)
+	}
+	doAuth(t, h, "DELETE", "/blocks/"+b.User.ID, a.AccessToken, nil)
+	if got := doAuth(t, h, "POST", "/dms", a.AccessToken, createDMReq{UserID: b.User.ID}).Code; got != http.StatusOK {
+		t.Fatalf("DM after unblock code=%d, want 200", got)
+	}
+}
+
 func TestLeaveRemovesMembership(t *testing.T) {
 	h := testServer().Routes()
 	a := signup(t, h, "a@b.com")
