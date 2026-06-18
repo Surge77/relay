@@ -59,6 +59,14 @@ type ConversationSummary struct {
 	LastMessage *Message
 }
 
+// PushSubscription is a browser web-push endpoint for a user.
+type PushSubscription struct {
+	UserID   string
+	Endpoint string
+	P256dh   string
+	Auth     string
+}
+
 // Attachment is an uploaded file's metadata; the bytes live in the Storage
 // backend under StorageKey.
 type Attachment struct {

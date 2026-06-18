@@ -251,6 +251,9 @@ func (f *fakeStore) AttachmentByID(_ context.Context, _ string) (model.Attachmen
 
 func (f *fakeStore) Ping(_ context.Context) error { return nil }
 
+func (f *fakeStore) SavePushSubscription(_ context.Context, _, _, _, _ string) error { return nil }
+func (f *fakeStore) DeletePushSubscription(_ context.Context, _, _ string) error     { return nil }
+
 type sessionEnvelope struct {
 	Success bool        `json:"success"`
 	Data    sessionResp `json:"data"`

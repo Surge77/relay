@@ -54,6 +54,9 @@ type DataStore interface {
 	InsertAttachment(ctx context.Context, a model.Attachment) (string, error)
 	AttachmentByID(ctx context.Context, id string) (model.Attachment, error)
 
+	SavePushSubscription(ctx context.Context, userID, endpoint, p256dh, auth string) error
+	DeletePushSubscription(ctx context.Context, userID, endpoint string) error
+
 	Ping(ctx context.Context) error
 }
 
@@ -124,6 +127,9 @@ func (s *Server) Routes() http.Handler {
 
 	mux.Handle("POST /conversations/{id}/attachments", s.requireAuth(http.HandlerFunc(s.handleUpload)))
 	mux.Handle("GET /attachments/{id}", s.requireAuth(http.HandlerFunc(s.handleDownload)))
+
+	mux.Handle("POST /push/subscribe", s.requireAuth(http.HandlerFunc(s.handlePushSubscribe)))
+	mux.Handle("DELETE /push/subscribe", s.requireAuth(http.HandlerFunc(s.handlePushUnsubscribe)))
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
