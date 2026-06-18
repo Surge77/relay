@@ -73,6 +73,14 @@ func (h *Hub) OnFrame(ctx context.Context, c registry.Client, f protocol.Frame) 
 		h.handleTyping(ctx, c, f)
 	case protocol.TypeRead:
 		h.handleRead(ctx, c, f)
+	case protocol.TypeEdit:
+		h.handleEdit(ctx, c, f)
+	case protocol.TypeDelete:
+		h.handleDelete(ctx, c, f)
+	case protocol.TypeReact:
+		h.handleReaction(ctx, c, f, true)
+	case protocol.TypeUnreact:
+		h.handleReaction(ctx, c, f, false)
 	case protocol.TypePing:
 		octx, cancel := context.WithTimeout(ctx, opTimeout)
 		if err := h.presence.Refresh(octx, c.UserID()); err != nil {
@@ -245,6 +253,74 @@ func (h *Hub) replayCatchUp(ctx context.Context, c registry.Client, conversation
 		last = m.Seq
 	}
 	c.Enqueue(protocol.Frame{Type: protocol.TypeCaughtUp, ConversationID: conversationID, Seq: last})
+}
+
+// handleEdit updates a message body (author only) and fans out message_edited.
+func (h *Hub) handleEdit(ctx context.Context, c registry.Client, f protocol.Frame) {
+	if f.ConversationID == "" || f.Seq <= 0 || f.Body == "" {
+		sendErr(c, protocol.CodeBadFrame, "edit requires conversation_id, seq, body")
+		return
+	}
+	if !h.authorize(ctx, c, f.ConversationID) {
+		return
+	}
+	octx, cancel := context.WithTimeout(ctx, opTimeout)
+	defer cancel()
+	if err := h.store.EditMessage(octx, f.ConversationID, f.Seq, c.UserID(), f.Body); err != nil {
+		sendErr(c, protocol.CodeForbidden, "cannot edit this message")
+		return
+	}
+	_ = h.fan.Publish(octx, f.ConversationID, protocol.Frame{
+		Type: protocol.TypeMessageEdited, ConversationID: f.ConversationID,
+		Seq: f.Seq, Body: f.Body, TS: time.Now().UnixMilli(),
+	})
+}
+
+// handleDelete soft-deletes a message (author only) and fans out a tombstone.
+func (h *Hub) handleDelete(ctx context.Context, c registry.Client, f protocol.Frame) {
+	if f.ConversationID == "" || f.Seq <= 0 {
+		sendErr(c, protocol.CodeBadFrame, "delete requires conversation_id and seq")
+		return
+	}
+	if !h.authorize(ctx, c, f.ConversationID) {
+		return
+	}
+	octx, cancel := context.WithTimeout(ctx, opTimeout)
+	defer cancel()
+	if err := h.store.SoftDeleteMessage(octx, f.ConversationID, f.Seq, c.UserID()); err != nil {
+		sendErr(c, protocol.CodeForbidden, "cannot delete this message")
+		return
+	}
+	_ = h.fan.Publish(octx, f.ConversationID, protocol.Frame{
+		Type: protocol.TypeMessageDeleted, ConversationID: f.ConversationID, Seq: f.Seq,
+	})
+}
+
+// handleReaction adds or removes a reaction and fans out the change.
+func (h *Hub) handleReaction(ctx context.Context, c registry.Client, f protocol.Frame, add bool) {
+	if f.ConversationID == "" || f.Seq <= 0 || f.Emoji == "" {
+		sendErr(c, protocol.CodeBadFrame, "reaction requires conversation_id, seq, emoji")
+		return
+	}
+	if !h.authorize(ctx, c, f.ConversationID) {
+		return
+	}
+	octx, cancel := context.WithTimeout(ctx, opTimeout)
+	defer cancel()
+	var err error
+	out := protocol.Frame{ConversationID: f.ConversationID, Seq: f.Seq, UserID: c.UserID(), Emoji: f.Emoji}
+	if add {
+		err = h.store.AddReaction(octx, f.ConversationID, f.Seq, c.UserID(), f.Emoji)
+		out.Type = protocol.TypeReactionAdded
+	} else {
+		err = h.store.RemoveReaction(octx, f.ConversationID, f.Seq, c.UserID(), f.Emoji)
+		out.Type = protocol.TypeReactionRemoved
+	}
+	if err != nil {
+		sendErr(c, protocol.CodeInternal, "could not update reaction")
+		return
+	}
+	_ = h.fan.Publish(octx, f.ConversationID, out)
 }
 
 func (h *Hub) handleTyping(ctx context.Context, c registry.Client, f protocol.Frame) {

@@ -31,6 +31,10 @@ type Store interface {
 	ConversationsOf(ctx context.Context, userID string) ([]string, error)
 	MembersOf(ctx context.Context, conversationID string) ([]string, error)
 	SetLastRead(ctx context.Context, conversationID, userID string, seq int64) error
+	EditMessage(ctx context.Context, conversationID string, seq int64, authorID, body string) error
+	SoftDeleteMessage(ctx context.Context, conversationID string, seq int64, authorID string) error
+	AddReaction(ctx context.Context, conversationID string, seq int64, userID, emoji string) error
+	RemoveReaction(ctx context.Context, conversationID string, seq int64, userID, emoji string) error
 }
 
 // Presence tracks online/offline state. Online is set on connect, refreshed by

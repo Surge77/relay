@@ -131,6 +131,39 @@ func TestConnect_BroadcastsPresence(t *testing.T) {
 	}
 }
 
+func TestEditDeleteReact_FanOutAndAuthor(t *testing.T) {
+	ctx := context.Background()
+	h, _ := newTestHub("general", "alice", "bob")
+	alice := &fakeClient{id: "ca", user: "alice"}
+	bob := &fakeClient{id: "cb", user: "bob"}
+	h.OnConnect(alice)
+	h.OnConnect(bob)
+	h.OnFrame(ctx, alice, protocol.Frame{Type: protocol.TypeSubscribe, ConversationID: "general"})
+	h.OnFrame(ctx, bob, protocol.Frame{Type: protocol.TypeSubscribe, ConversationID: "general"})
+	h.OnFrame(ctx, alice, protocol.Frame{Type: protocol.TypeSend, ConversationID: "general", ClientMsgID: "m1", Body: "hi"})
+
+	// Author edit fans out message_edited.
+	h.OnFrame(ctx, alice, protocol.Frame{Type: protocol.TypeEdit, ConversationID: "general", Seq: 1, Body: "hi (edited)"})
+	if ed := framesOfType(bob.frames(), protocol.TypeMessageEdited); len(ed) != 1 || ed[0].Body != "hi (edited)" {
+		t.Fatalf("edited frames = %+v, want one with edited body", ed)
+	}
+	// Non-author edit is rejected with an error frame.
+	h.OnFrame(ctx, bob, protocol.Frame{Type: protocol.TypeEdit, ConversationID: "general", Seq: 1, Body: "hijack"})
+	if errs := framesOfType(bob.frames(), protocol.TypeError); len(errs) == 0 {
+		t.Fatal("non-author edit should produce an error frame")
+	}
+	// Reaction fans out to other members.
+	h.OnFrame(ctx, bob, protocol.Frame{Type: protocol.TypeReact, ConversationID: "general", Seq: 1, Emoji: "👍"})
+	if rx := framesOfType(alice.frames(), protocol.TypeReactionAdded); len(rx) != 1 || rx[0].Emoji != "👍" {
+		t.Fatalf("reaction frames = %+v, want one 👍", rx)
+	}
+	// Author delete fans out a tombstone.
+	h.OnFrame(ctx, alice, protocol.Frame{Type: protocol.TypeDelete, ConversationID: "general", Seq: 1})
+	if del := framesOfType(bob.frames(), protocol.TypeMessageDeleted); len(del) != 1 {
+		t.Fatalf("delete frames = %+v, want one tombstone", del)
+	}
+}
+
 func TestOnConnect_SubscribesToUserChannel(t *testing.T) {
 	h, _ := newTestHub("general", "alice")
 	alice := &fakeClient{id: "ca", user: "alice"}

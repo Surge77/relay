@@ -41,6 +41,60 @@ func (s *Store) HistoryBefore(ctx context.Context, conversationID string, before
 	return desc, nil
 }
 
+// EditMessage updates a message body (author only), stamping edited_at. Returns
+// ErrNotFound if the message does not exist or the user is not its author.
+func (s *Store) EditMessage(ctx context.Context, conversationID string, seq int64, authorID, body string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE messages SET body=$4, edited_at=now()
+		  WHERE conversation_id=$1 AND seq=$2 AND sender_id=$3 AND deleted_at IS NULL`,
+		conversationID, seq, authorID, body)
+	if err != nil {
+		return fmt.Errorf("edit message: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SoftDeleteMessage tombstones a message (author only); the row stays so history
+// and ordering are preserved.
+func (s *Store) SoftDeleteMessage(ctx context.Context, conversationID string, seq int64, authorID string) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE messages SET deleted_at=now(), body=''
+		  WHERE conversation_id=$1 AND seq=$2 AND sender_id=$3 AND deleted_at IS NULL`,
+		conversationID, seq, authorID)
+	if err != nil {
+		return fmt.Errorf("delete message: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// AddReaction records a reaction, idempotent on (message, user, emoji).
+func (s *Store) AddReaction(ctx context.Context, conversationID string, seq int64, userID, emoji string) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO reactions (conversation_id, message_seq, user_id, emoji) VALUES ($1,$2,$3,$4)
+		 ON CONFLICT DO NOTHING`, conversationID, seq, userID, emoji)
+	if err != nil {
+		return fmt.Errorf("add reaction: %w", err)
+	}
+	return nil
+}
+
+// RemoveReaction deletes a reaction.
+func (s *Store) RemoveReaction(ctx context.Context, conversationID string, seq int64, userID, emoji string) error {
+	_, err := s.pool.Exec(ctx,
+		`DELETE FROM reactions WHERE conversation_id=$1 AND message_seq=$2 AND user_id=$3 AND emoji=$4`,
+		conversationID, seq, userID, emoji)
+	if err != nil {
+		return fmt.Errorf("remove reaction: %w", err)
+	}
+	return nil
+}
+
 // UnreadCount returns how many messages in a conversation the user has not read
 // (highest seq minus their last_read_seq, floored at zero).
 func (s *Store) UnreadCount(ctx context.Context, conversationID, userID string) (int64, error) {
