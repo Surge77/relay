@@ -203,7 +203,7 @@ type sessionEnvelope struct {
 }
 
 func testServer() *Server {
-	return NewServer(newFakeStore(), []byte("test-secret-32-bytes-or-whatever"), []string{"http://localhost:3000"})
+	return NewServer(newFakeStore(), []byte("test-secret-32-bytes-or-whatever"), []string{"http://localhost:3000"}, nil)
 }
 
 func do(t *testing.T, h http.Handler, method, path string, body any) *httptest.ResponseRecorder {

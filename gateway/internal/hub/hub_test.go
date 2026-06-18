@@ -131,6 +131,22 @@ func TestConnect_BroadcastsPresence(t *testing.T) {
 	}
 }
 
+func TestOnConnect_SubscribesToUserChannel(t *testing.T) {
+	h, _ := newTestHub("general", "alice")
+	alice := &fakeClient{id: "ca", user: "alice"}
+	h.OnConnect(alice)
+
+	// A control-plane frame published to alice's per-user channel must reach her
+	// connection — this is how REST-side events (member_added, etc.) are delivered.
+	h.DeliverLocal(protocol.UserChannel("alice"),
+		protocol.Frame{Type: protocol.TypeMemberAdded, ConversationID: "x", UserID: "alice"})
+
+	got := framesOfType(alice.frames(), protocol.TypeMemberAdded)
+	if len(got) != 1 || got[0].ConversationID != "x" {
+		t.Fatalf("alice user-channel frames = %+v, want one member_added for x", got)
+	}
+}
+
 func TestSubscribe_SendsPresenceSnapshot(t *testing.T) {
 	ctx := context.Background()
 	reg := registry.New()

@@ -15,8 +15,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/Surge77/relay/gateway/internal/api"
 	"github.com/Surge77/relay/gateway/internal/config"
+	"github.com/Surge77/relay/gateway/internal/events"
 	"github.com/Surge77/relay/gateway/internal/store"
 )
 
@@ -40,10 +43,19 @@ func main() {
 	}
 	defer st.Close()
 
+	// Redis is used only to publish control-plane events onto the gateway
+	// fan-out; the API holds no socket state itself.
+	var publisher api.EventPublisher
+	if opts, err := redis.ParseURL(cfg.RedisURL); err == nil {
+		publisher = events.NewPublisher(redis.NewClient(opts))
+	} else {
+		log.Warn("redis url invalid; realtime events disabled", "err", err)
+	}
+
 	port := getEnvInt("API_PORT", 9000)
 	srv := &http.Server{
 		Addr:              ":" + strconv.Itoa(port),
-		Handler:           api.NewServer(st, cfg.JWTSecret, cfg.AllowedOrigins).Routes(),
+		Handler:           api.NewServer(st, cfg.JWTSecret, cfg.AllowedOrigins, publisher).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

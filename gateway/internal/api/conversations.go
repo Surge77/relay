@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Surge77/relay/gateway/internal/model"
+	"github.com/Surge77/relay/gateway/internal/protocol"
 )
 
 type createConversationReq struct {
@@ -60,6 +61,9 @@ func (s *Server) handleCreateConversation(w http.ResponseWriter, r *http.Request
 	for _, m := range req.Members {
 		if m != "" && m != actor {
 			_ = s.store.AddMember(r.Context(), c.ID, m)
+			_ = s.events.ToUser(r.Context(), m, protocol.Frame{
+				Type: protocol.TypeMemberAdded, ConversationID: c.ID, UserID: m, ActorID: actor,
+			})
 		}
 	}
 	writeJSON(w, http.StatusCreated, convView(c))
@@ -126,6 +130,9 @@ func (s *Server) handleAddMember(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "INTERNAL", "could not add member")
 		return
 	}
+	f := protocol.Frame{Type: protocol.TypeMemberAdded, ConversationID: convID, UserID: req.UserID, ActorID: userIDFrom(r.Context())}
+	_ = s.events.ToConversation(r.Context(), convID, f)
+	_ = s.events.ToUser(r.Context(), req.UserID, f) // tell the added user even if not yet subscribed to the conv channel
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -141,6 +148,9 @@ func (s *Server) handleRemoveMember(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "INTERNAL", "could not remove member")
 		return
 	}
+	f := protocol.Frame{Type: protocol.TypeMemberRemoved, ConversationID: convID, UserID: target, ActorID: userIDFrom(r.Context())}
+	_ = s.events.ToConversation(r.Context(), convID, f)
+	_ = s.events.ToUser(r.Context(), target, f)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
@@ -167,6 +177,9 @@ func (s *Server) handleRenameConversation(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusInternalServerError, "INTERNAL", "could not rename")
 		return
 	}
+	_ = s.events.ToConversation(r.Context(), convID, protocol.Frame{
+		Type: protocol.TypeConversationUpdated, ConversationID: convID, Name: req.Name, ActorID: userIDFrom(r.Context()),
+	})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

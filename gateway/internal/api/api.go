@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Surge77/relay/gateway/internal/model"
+	"github.com/Surge77/relay/gateway/internal/protocol"
 )
 
 // maxBodyBytes caps a request body to keep JSON decoding bounded.
@@ -42,21 +43,38 @@ type DataStore interface {
 	SetLastRead(ctx context.Context, conversationID, userID string, seq int64) error
 }
 
+// EventPublisher delivers control-plane frames to connected clients via the
+// realtime fan-out. A nil publisher is replaced with a no-op.
+type EventPublisher interface {
+	ToConversation(ctx context.Context, conversationID string, f protocol.Frame) error
+	ToUser(ctx context.Context, userID string, f protocol.Frame) error
+}
+
+type noopPublisher struct{}
+
+func (noopPublisher) ToConversation(context.Context, string, protocol.Frame) error { return nil }
+func (noopPublisher) ToUser(context.Context, string, protocol.Frame) error         { return nil }
+
 // Server holds the control-plane dependencies and builds the HTTP router.
 type Server struct {
 	store   DataStore
 	secret  []byte
 	origins map[string]bool
+	events  EventPublisher
 }
 
 // NewServer wires the control plane. allowedOrigins are echoed back for CORS so
-// the browser can send credentials (the refresh cookie).
-func NewServer(st DataStore, secret []byte, allowedOrigins []string) *Server {
+// the browser can send credentials (the refresh cookie). A nil events publisher
+// disables realtime notification (handlers still mutate state).
+func NewServer(st DataStore, secret []byte, allowedOrigins []string, events EventPublisher) *Server {
 	origins := make(map[string]bool, len(allowedOrigins))
 	for _, o := range allowedOrigins {
 		origins[o] = true
 	}
-	return &Server{store: st, secret: secret, origins: origins}
+	if events == nil {
+		events = noopPublisher{}
+	}
+	return &Server{store: st, secret: secret, origins: origins, events: events}
 }
 
 // Routes returns the HTTP handler for the control plane.

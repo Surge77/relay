@@ -14,6 +14,12 @@ import (
 // presence to the conversations they belong to.
 func (h *Hub) OnConnect(c registry.Client) {
 	h.reg.Add(c)
+	// Subscribe this connection to its per-user event channel so control-plane
+	// events (added to a conversation, etc.) published by the REST API reach it.
+	userChan := protocol.UserChannel(c.UserID())
+	h.fan.EnsureSubscribed(userChan)
+	h.reg.Subscribe(c.ID(), userChan)
+
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
 	if err := h.presence.Online(ctx, c.UserID()); err == nil {
