@@ -41,6 +41,7 @@ type DataStore interface {
 	HistoryBefore(ctx context.Context, conversationID string, beforeSeq int64, limit int) ([]model.Message, error)
 	UnreadCount(ctx context.Context, conversationID, userID string) (int64, error)
 	SetLastRead(ctx context.Context, conversationID, userID string, seq int64) error
+	SearchMessages(ctx context.Context, userID, query string, limit int) ([]model.Message, error)
 }
 
 // EventPublisher delivers control-plane frames to connected clients via the
@@ -98,6 +99,8 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /conversations/{id}/messages", s.requireAuth(http.HandlerFunc(s.handleHistory)))
 	mux.Handle("GET /conversations/{id}/unread", s.requireAuth(http.HandlerFunc(s.handleUnread)))
 	mux.Handle("POST /conversations/{id}/read", s.requireAuth(http.HandlerFunc(s.handleRead)))
+
+	mux.Handle("GET /search", s.requireAuth(http.HandlerFunc(s.handleSearch)))
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))

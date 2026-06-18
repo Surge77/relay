@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS messages_tsv;
+ALTER TABLE messages DROP COLUMN IF EXISTS tsv;

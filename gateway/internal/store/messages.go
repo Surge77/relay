@@ -41,6 +41,32 @@ func (s *Store) HistoryBefore(ctx context.Context, conversationID string, before
 	return desc, nil
 }
 
+// SearchMessages returns messages matching a full-text query, scoped to the
+// conversations the user belongs to, ranked by relevance. Tombstoned messages
+// are excluded.
+func (s *Store) SearchMessages(ctx context.Context, userID, query string, limit int) ([]model.Message, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT m.conversation_id, m.seq, m.sender_id, m.client_msg_id, m.body, m.ts
+		   FROM messages m
+		   JOIN memberships mem ON mem.conversation_id = m.conversation_id AND mem.user_id = $1
+		  WHERE m.tsv @@ plainto_tsquery('english', $2) AND m.deleted_at IS NULL
+		  ORDER BY ts_rank(m.tsv, plainto_tsquery('english', $2)) DESC, m.ts DESC
+		  LIMIT $3`, userID, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("search messages: %w", err)
+	}
+	defer rows.Close()
+	out := make([]model.Message, 0)
+	for rows.Next() {
+		var m model.Message
+		if err := rows.Scan(&m.ConversationID, &m.Seq, &m.SenderID, &m.ClientMsgID, &m.Body, &m.TS); err != nil {
+			return nil, fmt.Errorf("scan search result: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // EditMessage updates a message body (author only), stamping edited_at. Returns
 // ErrNotFound if the message does not exist or the user is not its author.
 func (s *Store) EditMessage(ctx context.Context, conversationID string, seq int64, authorID, body string) error {

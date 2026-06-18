@@ -197,6 +197,10 @@ func (f *fakeStore) UnreadCount(_ context.Context, _, _ string) (int64, error) {
 
 func (f *fakeStore) SetLastRead(_ context.Context, _, _ string, _ int64) error { return nil }
 
+func (f *fakeStore) SearchMessages(_ context.Context, _, _ string, _ int) ([]model.Message, error) {
+	return nil, nil
+}
+
 type sessionEnvelope struct {
 	Success bool        `json:"success"`
 	Data    sessionResp `json:"data"`
