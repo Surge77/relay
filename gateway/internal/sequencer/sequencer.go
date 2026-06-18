@@ -4,7 +4,17 @@
 //
 // Redis INCR is the hot path. The durable source of truth is Postgres: when the
 // Redis counter is missing (cold start, restart, eviction) it is re-seeded from
-// MAX(seq) so the counter can never regress and hand out a duplicate seq.
+// MAX(seq).
+//
+// Correctness note: Postgres history is written asynchronously by the durable
+// stream consumer, so MAX(seq) can lag the highest seq already issued. Re-seeding
+// from it is therefore safe to never regress ONLY when the Redis counter survives
+// restarts — i.e. Redis is run with AOF persistence (the production assumption).
+// Without AOF, a counter loss that also loses un-drained stream entries would
+// reseed below recently-issued (but now-lost) seqs; those messages are gone
+// either way, so surviving messages keep unique seqs, but the "never regresses"
+// guarantee strictly depends on AOF. The dev miniredis broker has no AOF and is
+// not durable across restarts by design.
 package sequencer
 
 import (
