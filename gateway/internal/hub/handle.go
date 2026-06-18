@@ -21,8 +21,15 @@ func (h *Hub) OnConnect(c registry.Client) {
 	}
 }
 
+// presenceOfflineGrace is how long a user's last connection may be gone before
+// we declare them offline. It absorbs brief reconnects (a network blip, a dev
+// double-mount) so the presence dot doesn't flap online→offline→online on every
+// reconnect — the offline only fires if no new connection arrives in time.
+const presenceOfflineGrace = 1500 * time.Millisecond
+
 // OnDisconnect deregisters the connection. If the user has no remaining local
-// connection, it clears presence and broadcasts offline.
+// connection, it schedules a grace-delayed offline so a fast reconnect keeps the
+// user continuously online.
 func (h *Hub) OnDisconnect(c registry.Client) {
 	emptied := h.reg.Remove(c)
 	// Release fan-out subscriptions for conversations no local client follows.
@@ -32,10 +39,20 @@ func (h *Hub) OnDisconnect(c registry.Client) {
 	if h.reg.HasLocalMember(c.UserID()) {
 		return // another tab is still open on this node
 	}
+	go h.goOfflineAfterGrace(c.UserID())
+}
+
+// goOfflineAfterGrace clears presence only if the user is still gone after the
+// grace window — i.e. it was a real disconnect, not a reconnect in flight.
+func (h *Hub) goOfflineAfterGrace(userID string) {
+	time.Sleep(presenceOfflineGrace)
+	if h.reg.HasLocalMember(userID) {
+		return // reconnected within the grace window; stay online
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), opTimeout)
 	defer cancel()
-	if err := h.presence.Offline(ctx, c.UserID()); err == nil {
-		h.broadcastPresence(ctx, c.UserID(), protocol.StateOffline)
+	if err := h.presence.Offline(ctx, userID); err == nil {
+		h.broadcastPresence(ctx, userID, protocol.StateOffline)
 	}
 }
 
@@ -171,7 +188,32 @@ func (h *Hub) handleSubscribe(ctx context.Context, c registry.Client, f protocol
 	// the gap between replay and live; the client dedupes any overlap by seq.
 	h.fan.EnsureSubscribed(f.ConversationID)
 	h.reg.Subscribe(c.ID(), f.ConversationID)
+	h.sendPresenceSnapshot(ctx, c, f.ConversationID)
 	h.replayCatchUp(ctx, c, f.ConversationID, f.LastAckedSeq)
+}
+
+// sendPresenceSnapshot tells a just-subscribed client which members are already
+// online. Without it a client would only ever learn about users who connect
+// AFTER it — so a peer already present (including itself) would show offline.
+func (h *Hub) sendPresenceSnapshot(ctx context.Context, c registry.Client, conversationID string) {
+	octx, cancel := context.WithTimeout(ctx, opTimeout)
+	defer cancel()
+	members, err := h.store.MembersOf(octx, conversationID)
+	if err != nil {
+		return // snapshot is best-effort; live presence events still flow
+	}
+	for _, userID := range members {
+		online, err := h.presence.IsOnline(octx, userID)
+		if err != nil || !online {
+			continue
+		}
+		c.Enqueue(protocol.Frame{
+			Type:           protocol.TypePresence,
+			ConversationID: conversationID,
+			UserID:         userID,
+			State:          protocol.StateOnline,
+		})
+	}
 }
 
 func (h *Hub) replayCatchUp(ctx context.Context, c registry.Client, conversationID string, afterSeq int64) {

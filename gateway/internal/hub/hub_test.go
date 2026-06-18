@@ -131,6 +131,47 @@ func TestConnect_BroadcastsPresence(t *testing.T) {
 	}
 }
 
+func TestSubscribe_SendsPresenceSnapshot(t *testing.T) {
+	ctx := context.Background()
+	reg := registry.New()
+	store := devinfra.NewStore()
+	for _, u := range []string{"alice", "bob"} {
+		store.AddMember("general", u)
+	}
+	lf := devinfra.NewLocalFanout(nil)
+	h := New(reg, devinfra.NewSequencer(), store, lf, store, presence.NewMemory())
+	lf.SetDeliver(h.DeliverLocal)
+
+	// alice is online and subscribed first.
+	alice := &fakeClient{id: "ca", user: "alice"}
+	h.OnConnect(alice)
+	h.OnFrame(ctx, alice, protocol.Frame{Type: protocol.TypeSubscribe, ConversationID: "general"})
+
+	// bob joins AFTER alice. The bug was that bob would never learn alice is
+	// already online (he'd only see users who connect after him). The join-time
+	// snapshot must report both alice and bob (himself) as online.
+	bob := &fakeClient{id: "cb", user: "bob"}
+	h.OnConnect(bob)
+	h.OnFrame(ctx, bob, protocol.Frame{Type: protocol.TypeSubscribe, ConversationID: "general"})
+
+	pf := framesOfType(bob.frames(), protocol.TypePresence)
+	if !hasOnline(pf, "alice") {
+		t.Fatalf("bob presence = %+v, want alice online in join snapshot", pf)
+	}
+	if !hasOnline(pf, "bob") {
+		t.Fatalf("bob presence = %+v, want self online in join snapshot", pf)
+	}
+}
+
+func hasOnline(fs []protocol.Frame, user string) bool {
+	for _, f := range fs {
+		if f.UserID == user && f.State == protocol.StateOnline {
+			return true
+		}
+	}
+	return false
+}
+
 func TestSubscribe_ReplaysHistoryInOrder(t *testing.T) {
 	ctx := context.Background()
 	h, _ := newTestHub("general", "alice", "bob")

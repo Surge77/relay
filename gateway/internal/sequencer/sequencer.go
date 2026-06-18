@@ -35,29 +35,49 @@ func key(conversationID string) string {
 	return "conv:" + conversationID + ":seq"
 }
 
-// Next returns the next sequence number for a conversation. On a cold counter it
-// seeds from the durable MAX(seq) under SETNX before incrementing, so concurrent
-// nodes converge on a single monotonic sequence even across a Redis restart.
+// incrIfPresent atomically increments an existing counter, or returns -1 to
+// signal a cold counter that must be recovered from the durable store. The hot
+// path (counter present) is a single round-trip.
+var incrIfPresent = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 1 then
+  return redis.call('INCR', KEYS[1])
+end
+return -1`)
+
+// seedAndIncr seeds the counter from the durable high-water mark only if it is
+// still absent, then increments — both under one Redis execution. Atomicity is
+// what makes concurrent nodes safe: a racing seed can never overwrite a counter
+// another node already advanced, so no seq is ever handed out twice.
+var seedAndIncr = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 0 then
+  redis.call('SET', KEYS[1], ARGV[1])
+end
+return redis.call('INCR', KEYS[1])`)
+
+// coldCounter is the sentinel incrIfPresent returns when the key is missing.
+const coldCounter = -1
+
+// Next returns the next sequence number for a conversation. The common path is a
+// single atomic INCR; only a cold counter (first message, Redis restart, or
+// eviction) pays the durable MAX(seq) recovery, after which seed+increment run
+// atomically so concurrent nodes converge on one gap-free sequence.
 func (r *Redis) Next(ctx context.Context, conversationID string) (int64, error) {
 	k := key(conversationID)
-	exists, err := r.rdb.Exists(ctx, k).Result()
-	if err != nil {
-		return 0, fmt.Errorf("seq exists check: %w", err)
-	}
-	if exists == 0 {
-		max, err := r.store.MaxSeq(ctx, conversationID)
-		if err != nil {
-			return 0, fmt.Errorf("seq recovery: %w", err)
-		}
-		// SETNX: only the first racer seeds; others no-op. Either way the
-		// subsequent INCR is atomic and yields distinct increasing values.
-		if err := r.rdb.SetNX(ctx, k, max, 0).Err(); err != nil {
-			return 0, fmt.Errorf("seq seed: %w", err)
-		}
-	}
-	seq, err := r.rdb.Incr(ctx, k).Result()
+	seq, err := incrIfPresent.Run(ctx, r.rdb, []string{k}).Int64()
 	if err != nil {
 		return 0, fmt.Errorf("seq incr: %w", err)
+	}
+	if seq != coldCounter {
+		return seq, nil
+	}
+
+	max, err := r.store.MaxSeq(ctx, conversationID)
+	if err != nil {
+		return 0, fmt.Errorf("seq recovery: %w", err)
+	}
+	seq, err = seedAndIncr.Run(ctx, r.rdb, []string{k}, max).Int64()
+	if err != nil {
+		return 0, fmt.Errorf("seq seed: %w", err)
 	}
 	return seq, nil
 }

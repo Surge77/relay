@@ -64,6 +64,18 @@ func (s *Store) IsMember(_ context.Context, userID, conversationID string) (bool
 	return ok, nil
 }
 
+// MembersOf returns every user in a conversation — backs the join-time presence
+// snapshot.
+func (s *Store) MembersOf(_ context.Context, conversationID string) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []string
+	for u := range s.members[conversationID] {
+		out = append(out, u)
+	}
+	return out, nil
+}
+
 // ConversationsOf returns every conversation the user is a member of.
 func (s *Store) ConversationsOf(_ context.Context, userID string) ([]string, error) {
 	s.mu.RLock()

@@ -7,6 +7,7 @@ package presence
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -56,9 +57,44 @@ func (r *Redis) IsOnline(ctx context.Context, userID string) (bool, error) {
 	return n > 0, nil
 }
 
-// Noop is a presence tracker that does nothing — used by the in-memory dev mode.
+// Noop is a presence tracker that records nothing. Retained for tests that do
+// not exercise presence; IsOnline always reports false.
 type Noop struct{}
 
-func (Noop) Online(context.Context, string) error  { return nil }
-func (Noop) Refresh(context.Context, string) error { return nil }
-func (Noop) Offline(context.Context, string) error { return nil }
+func (Noop) Online(context.Context, string) error           { return nil }
+func (Noop) Refresh(context.Context, string) error          { return nil }
+func (Noop) Offline(context.Context, string) error          { return nil }
+func (Noop) IsOnline(context.Context, string) (bool, error) { return false, nil }
+
+// Memory is a process-local presence tracker for the single-node in-memory dev
+// mode. It is correct only because every dev connection lands on the one node;
+// multi-node deployments must use Redis so presence is visible across nodes.
+type Memory struct {
+	mu     sync.RWMutex
+	online map[string]struct{}
+}
+
+func NewMemory() *Memory { return &Memory{online: make(map[string]struct{})} }
+
+func (m *Memory) Online(_ context.Context, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.online[userID] = struct{}{}
+	return nil
+}
+
+func (m *Memory) Refresh(ctx context.Context, userID string) error { return m.Online(ctx, userID) }
+
+func (m *Memory) Offline(_ context.Context, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.online, userID)
+	return nil
+}
+
+func (m *Memory) IsOnline(_ context.Context, userID string) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	_, ok := m.online[userID]
+	return ok, nil
+}

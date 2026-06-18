@@ -93,7 +93,7 @@ func buildDevHub(reg *registry.Registry) (*hub.Hub, func(), error) {
 		mem.AddMember("general", u)
 	}
 	lf := devinfra.NewLocalFanout(nil)
-	h := hub.New(reg, devinfra.NewSequencer(), mem, lf, mem, presence.Noop{})
+	h := hub.New(reg, devinfra.NewSequencer(), mem, lf, mem, presence.NewMemory())
 	lf.SetDeliver(h.DeliverLocal)
 	return h, func() {}, nil
 }

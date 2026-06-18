@@ -5,6 +5,27 @@ versioning: [SemVer](https://semver.org).
 
 ## [Unreleased]
 
+### Fixed
+- Presence: a subscriber now receives a snapshot of who is already online on join,
+  instead of only learning about users who connect afterwards (the "no green dots"
+  bug). Backed by `Store.MembersOf` + `Presence.IsOnline`.
+- Presence no longer flaps online→offline→online on a brief reconnect: the offline
+  broadcast is debounced behind a short grace window.
+
+### Changed
+- Sequencer hot path cut from three Redis round-trips to one via an atomic Lua
+  increment; cold-start seed from Postgres `MAX(seq)` is now atomic, closing a
+  seed race between concurrent nodes.
+- In-memory dev mode tracks presence locally (was a no-op), so the dependency-free
+  single-node demo shows presence too.
+
+### Added
+- `cmd/devredis`: bundled miniredis as a real TCP Redis broker, and
+  `scripts/dev-multinode.ps1`, for a zero-admin local multi-node stack (no Redis
+  install, no Docker).
+- Web: read-receipt ("✓✓ Seen") indicator, and a `?gw=` query override so one web
+  origin can point each tab at a different gateway node.
+
 ### Added
 - Phase 0: repository scaffold, hygiene files, CI skeleton, `.env.example`, dev scripts.
 - Phase 1: single-node Go gateway — JWT handshake, node-local socket registry, conversation

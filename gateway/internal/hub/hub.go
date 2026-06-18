@@ -29,15 +29,18 @@ type Store interface {
 	IsMember(ctx context.Context, userID, conversationID string) (bool, error)
 	HistoryAfter(ctx context.Context, conversationID string, afterSeq int64, limit int) ([]model.Message, error)
 	ConversationsOf(ctx context.Context, userID string) ([]string, error)
+	MembersOf(ctx context.Context, conversationID string) ([]string, error)
 	SetLastRead(ctx context.Context, conversationID, userID string, seq int64) error
 }
 
 // Presence tracks online/offline state. Online is set on connect, refreshed by
-// heartbeats, and cleared on disconnect.
+// heartbeats, and cleared on disconnect. IsOnline backs the join-time snapshot so
+// a subscriber learns who is already present, not only who connects afterwards.
 type Presence interface {
 	Online(ctx context.Context, userID string) error
 	Refresh(ctx context.Context, userID string) error
 	Offline(ctx context.Context, userID string) error
+	IsOnline(ctx context.Context, userID string) (bool, error)
 }
 
 // Fanout routes a message to every node hosting an online member of a
