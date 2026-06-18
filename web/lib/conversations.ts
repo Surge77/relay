@@ -24,6 +24,7 @@ interface ConvState {
   conversations: ConversationSummary[];
   activeId: string | null;
   load: () => Promise<void>;
+  create: (kind: "channel" | "group", name: string) => Promise<void>;
   setActive: (id: string) => void;
   clearUnread: (id: string) => void;
 }
@@ -41,23 +42,33 @@ async function unwrap<T>(res: Response): Promise<T> {
   return json.data as T;
 }
 
-// authedGet calls a REST endpoint with the in-memory access token, refreshing
-// once on a 401 (the token is short-lived; the httpOnly refresh cookie renews it).
-async function authedGet<T>(path: string): Promise<T> {
+// authedFetch attaches the in-memory access token and retries once on a 401,
+// refreshing the token from the httpOnly cookie (access tokens are short-lived).
+async function authedFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const call = (token: string | null) =>
+    fetch(`/api${path}`, {
+      ...init,
+      credentials: "include",
+      headers: { ...init.headers, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    });
+
   let token = useAuthStore.getState().accessToken;
   if (!token) token = await refreshSession();
-  const res = await fetch(`/api${path}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-    credentials: "include",
-  });
+  const res = await call(token);
   if (res.status !== 401) return unwrap<T>(res);
+  return unwrap<T>(await call(await refreshSession()));
+}
 
-  const fresh = await refreshSession();
-  const retry = await fetch(`/api${path}`, {
-    headers: fresh ? { Authorization: `Bearer ${fresh}` } : {},
-    credentials: "include",
+function authedGet<T>(path: string): Promise<T> {
+  return authedFetch<T>(path);
+}
+
+function authedPost<T>(path: string, body: unknown): Promise<T> {
+  return authedFetch<T>(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
-  return unwrap<T>(retry);
 }
 
 export const useConvStore = create<ConvState>((set, get) => ({
@@ -67,6 +78,15 @@ export const useConvStore = create<ConvState>((set, get) => ({
   load: async () => {
     const list = (await authedGet<ConversationSummary[] | null>("/conversations")) ?? [];
     set((st) => ({ conversations: list, activeId: st.activeId ?? list[0]?.ID ?? null }));
+  },
+
+  // create makes a channel/group, then refetches the list (the create response
+  // is a bare conversation, not the summary shape the sidebar renders) and opens
+  // the new conversation.
+  create: async (kind, name) => {
+    const conv = await authedPost<{ id: string }>("/conversations", { kind, name, members: [] });
+    await get().load();
+    get().setActive(conv.id);
   },
 
   setActive: (id) => {
