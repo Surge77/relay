@@ -10,6 +10,7 @@ import { MessageList } from "@/components/MessageList";
 import { Composer } from "@/components/Composer";
 import { Sidebar } from "@/components/Sidebar";
 import { Search } from "@/components/Search";
+import { MemberRoster } from "@/components/MemberRoster";
 import { AuthGate } from "@/components/AuthGate";
 
 export default function Home() {
@@ -75,6 +76,7 @@ function Chat() {
             <header className="border-b border-neutral-800 px-4 py-3 text-sm font-medium">
               {convLabel(active)}
             </header>
+            <MemberRoster conversationId={activeId} me={user.id} />
             <MessageList conversation={activeId} me={user.id} />
             <div className="h-5 px-4 text-xs text-neutral-500">
               {typingUsers.length > 0 ? `${typingUsers.join(", ")} typing…` : ""}
