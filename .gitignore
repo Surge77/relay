@@ -45,3 +45,7 @@ coverage.html
 .playwright-mcp/
 *.stackdump
 relay-running-*.png
+demo-*.png
+*.tsbuildinfo
+/uploads/
+/gateway/uploads/
