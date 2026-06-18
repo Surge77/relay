@@ -3,10 +3,22 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { Frame } from "./protocol";
 import { useChatStore } from "./store";
+import { useAuthStore, refreshSession } from "./auth";
 
-const GATEWAY_WS = process.env.NEXT_PUBLIC_GATEWAY_WS ?? "ws://localhost:8080/ws";
+const DEFAULT_GATEWAY_WS = process.env.NEXT_PUBLIC_GATEWAY_WS ?? "ws://localhost:8080/ws";
 const MAX_BACKOFF_MS = 30_000;
 const PING_INTERVAL_MS = 10_000;
+
+// gatewayURL lets a single web origin drive any node: a ?gw=ws://host:port/ws
+// query param overrides the default, so two browser tabs can connect to two
+// different gateway nodes to demonstrate cross-node fan-out.
+function gatewayURL(): string {
+  if (typeof window !== "undefined") {
+    const override = new URLSearchParams(window.location.search).get("gw");
+    if (override) return override;
+  }
+  return DEFAULT_GATEWAY_WS;
+}
 
 interface UseChatSocket {
   send: (body: string) => void;
@@ -30,23 +42,17 @@ export function useChatSocket(user: string, conversation: string): UseChatSocket
     if (isClosed.current) return;
     store.getState().setStatus(ws.current ? "reconnecting" : "connecting");
 
-    let token: string | undefined;
-    try {
-      const res = await fetch(`/api/token?user=${encodeURIComponent(user)}`);
-      if (res.status >= 400 && res.status < 500) {
-        // Permanent rejection (e.g. unknown user) — don't reconnect-loop forever.
-        store.getState().setStatus("down");
-        return;
-      }
-      token = (await res.json()).token;
-      if (!token) throw new Error("no token");
-    } catch {
-      scheduleReconnect();
+    // Use the in-memory access token; if absent or stale, exchange the refresh
+    // cookie for a fresh one. A null result means we are not authenticated.
+    let token = useAuthStore.getState().accessToken;
+    if (!token) token = await refreshSession();
+    if (!token) {
+      store.getState().setStatus("down");
       return;
     }
     if (isClosed.current) return; // unmounted while awaiting the token
 
-    const socket = new WebSocket(`${GATEWAY_WS}?token=${token}`);
+    const socket = new WebSocket(`${gatewayURL()}?token=${token}`);
     ws.current = socket;
     // Ignore events from a socket that has since been superseded by a reconnect.
     const isCurrent = () => ws.current === socket;
