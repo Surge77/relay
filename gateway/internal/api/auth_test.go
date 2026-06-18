@@ -23,6 +23,9 @@ type fakeStore struct {
 	byEmail map[string]model.User
 	byID    map[string]model.User
 	tokens  map[string]model.RefreshToken
+	convs   map[string]model.Conversation
+	members map[string]map[string]string // conversationID -> userID -> role
+	dms     map[string]string            // dmKey -> conversationID
 }
 
 func newFakeStore() *fakeStore {
@@ -30,6 +33,9 @@ func newFakeStore() *fakeStore {
 		byEmail: map[string]model.User{},
 		byID:    map[string]model.User{},
 		tokens:  map[string]model.RefreshToken{},
+		convs:   map[string]model.Conversation{},
+		members: map[string]map[string]string{},
+		dms:     map[string]string{},
 	}
 }
 
@@ -89,7 +95,99 @@ func (f *fakeStore) RevokeRefreshToken(_ context.Context, hash string) error {
 	return nil
 }
 
-func (f *fakeStore) AddMember(_ context.Context, _, _ string) error { return nil }
+func (f *fakeStore) AddMember(_ context.Context, conv, user string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.members[conv] == nil {
+		f.members[conv] = map[string]string{}
+	}
+	if _, ok := f.members[conv][user]; !ok {
+		f.members[conv][user] = "member"
+	}
+	return nil
+}
+
+func (f *fakeStore) CreateConversation(_ context.Context, c model.Conversation) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.convs[c.ID] = c
+	f.members[c.ID] = map[string]string{c.CreatedBy: "owner"}
+	return nil
+}
+
+func (f *fakeStore) GetOrCreateDM(_ context.Context, a, b string) (model.Conversation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := a + ":" + b
+	if a > b {
+		key = b + ":" + a
+	}
+	if id, ok := f.dms[key]; ok {
+		return f.convs[id], nil
+	}
+	id := "dm_" + key
+	c := model.Conversation{ID: id, Kind: "dm", CreatedBy: a}
+	f.convs[id] = c
+	f.dms[key] = id
+	f.members[id] = map[string]string{a: "member", b: "member"}
+	return c, nil
+}
+
+func (f *fakeStore) ListConversationsFor(_ context.Context, userID string) ([]model.ConversationSummary, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []model.ConversationSummary
+	for id, mm := range f.members {
+		if _, ok := mm[userID]; ok {
+			out = append(out, model.ConversationSummary{Conversation: f.convs[id]})
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) ConversationDetail(_ context.Context, id string) (model.Conversation, []model.Member, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	c, ok := f.convs[id]
+	if !ok {
+		return model.Conversation{}, nil, store.ErrNotFound
+	}
+	var ms []model.Member
+	for u, role := range f.members[id] {
+		ms = append(ms, model.Member{UserID: u, Role: role})
+	}
+	return c, ms, nil
+}
+
+func (f *fakeStore) MemberRole(_ context.Context, conv, user string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if mm, ok := f.members[conv]; ok {
+		if role, ok := mm[user]; ok {
+			return role, nil
+		}
+	}
+	return "", store.ErrNotFound
+}
+
+func (f *fakeStore) RemoveMember(_ context.Context, conv, user string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if mm, ok := f.members[conv]; ok {
+		delete(mm, user)
+	}
+	return nil
+}
+
+func (f *fakeStore) RenameConversation(_ context.Context, conv, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if c, ok := f.convs[conv]; ok {
+		c.Name = name
+		f.convs[conv] = c
+	}
+	return nil
+}
 
 type sessionEnvelope struct {
 	Success bool        `json:"success"`

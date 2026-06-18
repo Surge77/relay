@@ -35,3 +35,26 @@ type RefreshToken struct {
 	ExpiresAt time.Time
 	RevokedAt *time.Time
 }
+
+// Conversation is a channel, group, or direct message.
+type Conversation struct {
+	ID        string
+	Kind      string // channel | dm | group
+	Name      string
+	CreatedBy string
+}
+
+// Member is a participant in a conversation.
+type Member struct {
+	UserID      string
+	DisplayName string
+	Role        string // owner | admin | member
+}
+
+// ConversationSummary is a conversation in a user's list with their unread count
+// and the latest message preview (nil when the conversation has no messages).
+type ConversationSummary struct {
+	Conversation
+	UnreadCount int64
+	LastMessage *Message
+}

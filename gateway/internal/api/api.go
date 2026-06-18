@@ -28,6 +28,14 @@ type DataStore interface {
 	RefreshTokenByHash(ctx context.Context, tokenHash string) (model.RefreshToken, error)
 	RevokeRefreshToken(ctx context.Context, tokenHash string) error
 	AddMember(ctx context.Context, conversationID, userID string) error
+
+	CreateConversation(ctx context.Context, c model.Conversation) error
+	GetOrCreateDM(ctx context.Context, userA, userB string) (model.Conversation, error)
+	ListConversationsFor(ctx context.Context, userID string) ([]model.ConversationSummary, error)
+	ConversationDetail(ctx context.Context, conversationID string) (model.Conversation, []model.Member, error)
+	MemberRole(ctx context.Context, conversationID, userID string) (string, error)
+	RemoveMember(ctx context.Context, conversationID, userID string) error
+	RenameConversation(ctx context.Context, conversationID, name string) error
 }
 
 // Server holds the control-plane dependencies and builds the HTTP router.
@@ -55,6 +63,16 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /auth/refresh", s.handleRefresh)
 	mux.HandleFunc("POST /auth/logout", s.handleLogout)
 	mux.Handle("GET /auth/me", s.requireAuth(http.HandlerFunc(s.handleMe)))
+
+	mux.Handle("POST /conversations", s.requireAuth(http.HandlerFunc(s.handleCreateConversation)))
+	mux.Handle("GET /conversations", s.requireAuth(http.HandlerFunc(s.handleListConversations)))
+	mux.Handle("GET /conversations/{id}", s.requireAuth(http.HandlerFunc(s.handleGetConversation)))
+	mux.Handle("PATCH /conversations/{id}", s.requireAuth(http.HandlerFunc(s.handleRenameConversation)))
+	mux.Handle("POST /conversations/{id}/members", s.requireAuth(http.HandlerFunc(s.handleAddMember)))
+	mux.Handle("DELETE /conversations/{id}/members/{userId}", s.requireAuth(http.HandlerFunc(s.handleRemoveMember)))
+	mux.Handle("POST /conversations/{id}/leave", s.requireAuth(http.HandlerFunc(s.handleLeave)))
+	mux.Handle("POST /dms", s.requireAuth(http.HandlerFunc(s.handleCreateDM)))
+
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
