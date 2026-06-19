@@ -7,6 +7,8 @@ const API_ORIGIN = process.env.API_ORIGIN ?? "http://localhost:9000";
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  // Emit a self-contained server bundle for the slim Docker runtime image.
+  output: "standalone",
   async rewrites() {
     return [{ source: "/api/:path*", destination: `${API_ORIGIN}/:path*` }];
   },

@@ -1,0 +1,7 @@
+.gotmp/
+bin/
+dist/
+uploads/
+*.exe
+*.log
+*_test.go
