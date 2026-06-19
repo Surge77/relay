@@ -25,6 +25,15 @@ versioning: [SemVer](https://semver.org).
   install, no Docker).
 - Web: read-receipt ("✓✓ Seen") indicator, and a `?gw=` query override so one web
   origin can point each tab at a different gateway node.
+- Deploy: dockerized 2-node gateway fleet behind an nginx load balancer
+  (`deploy/docker-compose.yml`) — Postgres, Redis, migrations runner, `api`, and web,
+  one-command bring-up of the cross-node path on Linux/CI. Multi-stage distroless
+  images for the Go services; Next.js standalone image.
+- Web unit tests (Vitest): chat-store ordering/dedupe/optimistic-ack and the
+  `useChatSocket` reconnect brain (backoff doubling + cap, intentional-close guard).
+  CI now runs them and builds the service images.
+- Benchmarks: recorded a real single-node run (in-memory, 300 conns — send→ack p95
+  28 ms, 52.6k msgs/sec fan-out, 0 failed) and made the k6 load harness stage-tunable.
 
 ### Added
 - Phase 0: repository scaffold, hygiene files, CI skeleton, `.env.example`, dev scripts.

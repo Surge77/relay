@@ -9,16 +9,10 @@ function msg(over: Partial<ChatMessage>): ChatMessage {
   return { seq: 0, senderId: "alice", clientMsgId: "", body: "hi", ts: 0, pending: false, ...over };
 }
 
-// Reset the singleton store between tests so each runs in isolation.
-const initial = useChatStore.getState();
+// Reset the singleton store's data between tests so each runs in isolation. A
+// partial set is enough — the action closures never change.
 beforeEach(() => {
-  useChatStore.setState(
-    { messages: {}, cursors: {}, presence: {}, typing: {}, receipts: {}, status: "connecting" },
-    true,
-  );
-  // restore actions stripped by the replace above
-  useChatStore.setState(initial);
-  useChatStore.setState({ messages: {}, cursors: {}, presence: {}, typing: {}, receipts: {} });
+  useChatStore.setState({ messages: {}, cursors: {}, presence: {}, typing: {}, receipts: {}, status: "connecting" });
 });
 
 describe("applyMessage ordering and dedupe", () => {
