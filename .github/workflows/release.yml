@@ -22,7 +22,7 @@ jobs:
           GOOS=linux  GOARCH=amd64 go build -o ../dist/relay-gateway-linux-amd64   ./cmd/gateway
           GOOS=windows GOARCH=amd64 go build -o ../dist/relay-gateway-windows-amd64.exe ./cmd/gateway
       - name: Create release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist/*
           generate_release_notes: true
