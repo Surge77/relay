@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -73,12 +74,19 @@ func (s *Store) ListConversationsFor(ctx context.Context, userID string) ([]mode
 	rows, err := s.pool.Query(ctx,
 		`SELECT c.id, c.kind, COALESCE(c.name,''), COALESCE(c.created_by,''),
 		        GREATEST(COALESCE(hw.max_seq,0) - m.last_read_seq, 0) AS unread,
-		        lm.seq, lm.sender_id, lm.body, lm.ts
+		        lm.seq, lm.sender_id, lm.body, lm.ts,
+		        peer.peer_id, peer.peer_name, peer.peer_avatar, peer.peer_last_seen
 		   FROM memberships m
 		   JOIN conversations c ON c.id = m.conversation_id
 		   LEFT JOIN LATERAL (SELECT MAX(seq) AS max_seq FROM messages WHERE conversation_id=c.id) hw ON true
 		   LEFT JOIN LATERAL (SELECT seq, sender_id, body, ts FROM messages
 		                       WHERE conversation_id=c.id ORDER BY seq DESC LIMIT 1) lm ON true
+		   LEFT JOIN LATERAL (
+		           SELECT pu.id AS peer_id, pu.display_name AS peer_name,
+		                  COALESCE(pu.avatar_url,'') AS peer_avatar, pu.last_seen_at AS peer_last_seen
+		             FROM memberships pm JOIN users pu ON pu.id = pm.user_id
+		            WHERE pm.conversation_id = c.id AND c.kind = 'dm' AND pm.user_id <> $1
+		            LIMIT 1) peer ON true
 		  WHERE m.user_id=$1
 		  ORDER BY lm.ts DESC NULLS LAST`, userID)
 	if err != nil {
@@ -91,8 +99,11 @@ func (s *Store) ListConversationsFor(ctx context.Context, userID string) ([]mode
 		var cs model.ConversationSummary
 		var seq, ts *int64
 		var sender, body *string
+		var peerID, peerName, peerAvatar *string
+		var peerLastSeen *time.Time
 		if err := rows.Scan(&cs.ID, &cs.Kind, &cs.Name, &cs.CreatedBy, &cs.UnreadCount,
-			&seq, &sender, &body, &ts); err != nil {
+			&seq, &sender, &body, &ts,
+			&peerID, &peerName, &peerAvatar, &peerLastSeen); err != nil {
 			return nil, fmt.Errorf("scan conversation: %w", err)
 		}
 		if seq != nil {
@@ -100,6 +111,10 @@ func (s *Store) ListConversationsFor(ctx context.Context, userID string) ([]mode
 				ConversationID: cs.ID, Seq: *seq, SenderID: derefStr(sender), Body: derefStr(body), TS: derefInt(ts),
 			}
 		}
+		cs.PeerID = derefStr(peerID)
+		cs.PeerName = derefStr(peerName)
+		cs.PeerAvatar = derefStr(peerAvatar)
+		cs.PeerLastSeen = peerLastSeen
 		out = append(out, cs)
 	}
 	return out, rows.Err()

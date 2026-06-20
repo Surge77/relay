@@ -17,9 +17,6 @@ const (
 	minPasswordLen = 8
 	maxPasswordLen = 200
 	refreshCookie  = "relay_refresh"
-	// defaultConversation is the seeded demo channel new signups auto-join so the
-	// chat works before the conversation-management phase lands. Best-effort.
-	defaultConversation = "general"
 )
 
 type signupReq struct {
@@ -90,9 +87,6 @@ func (s *Server) handleSignup(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "INTERNAL", "could not create account")
 		return
 	}
-	// Best-effort auto-join the demo channel so a fresh account can chat
-	// immediately; failure (e.g. no seeded channel) must not fail signup.
-	_ = s.store.AddMember(r.Context(), defaultConversation, u.ID)
 	s.respondSession(w, r, u, http.StatusCreated)
 }
 

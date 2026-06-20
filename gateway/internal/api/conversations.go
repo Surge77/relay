@@ -102,6 +102,11 @@ func (s *Server) handleListConversations(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusInternalServerError, "INTERNAL", "could not list conversations")
 		return
 	}
+	for i := range list {
+		if list[i].Kind == "dm" && list[i].PeerID != "" {
+			list[i].PeerOnline = s.isOnline(r.Context(), list[i].PeerID)
+		}
+	}
 	writeJSON(w, http.StatusOK, list)
 }
 

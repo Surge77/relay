@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -24,7 +25,7 @@ func IsDuplicate(err error) bool {
 }
 
 const userColumns = `id, COALESCE(email,''), display_name, COALESCE(password_hash,''),
-	COALESCE(avatar_url,''), COALESCE(status_text,'')`
+	COALESCE(avatar_url,''), COALESCE(status_text,''), last_seen_at`
 
 // CreateUser inserts a new account. Empty email/password are stored as NULL so a
 // credential-less dev user does not collide on the unique email index.
@@ -53,7 +54,7 @@ func (s *Store) UserByID(ctx context.Context, id string) (model.User, error) {
 func (s *Store) scanUser(ctx context.Context, q, arg string) (model.User, error) {
 	var u model.User
 	err := s.pool.QueryRow(ctx, q, arg).Scan(
-		&u.ID, &u.Email, &u.DisplayName, &u.PasswordHash, &u.AvatarURL, &u.StatusText)
+		&u.ID, &u.Email, &u.DisplayName, &u.PasswordHash, &u.AvatarURL, &u.StatusText, &u.LastSeenAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return model.User{}, ErrNotFound
 	}
@@ -61,6 +62,49 @@ func (s *Store) scanUser(ctx context.Context, q, arg string) (model.User, error)
 		return model.User{}, fmt.Errorf("scan user: %w", err)
 	}
 	return u, nil
+}
+
+// SearchUsers finds accounts whose display name or email contains query
+// (case-insensitive substring), excluding the caller and anyone blocked in
+// either direction. Backed by the trigram indexes from migration 0010.
+func (s *Store) SearchUsers(ctx context.Context, query, excludeUserID string, limit int) ([]model.User, error) {
+	// Escape LIKE metacharacters so a query of "%" matches a literal percent
+	// rather than every row. Backslash is the default LIKE escape in Postgres.
+	esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(strings.ToLower(query))
+	pattern := "%" + esc + "%"
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+userColumns+` FROM users u
+		  WHERE u.id <> $2
+		    AND (lower(u.display_name) LIKE $1 OR lower(COALESCE(u.email,'')) LIKE $1)
+		    AND NOT EXISTS (SELECT 1 FROM blocks b
+		         WHERE (b.blocker_id = u.id AND b.blocked_id = $2)
+		            OR (b.blocker_id = $2 AND b.blocked_id = u.id))
+		  ORDER BY u.display_name
+		  LIMIT $3`, pattern, excludeUserID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("search users: %w", err)
+	}
+	defer rows.Close()
+
+	var out []model.User
+	for rows.Next() {
+		var u model.User
+		if err := rows.Scan(&u.ID, &u.Email, &u.DisplayName, &u.PasswordHash,
+			&u.AvatarURL, &u.StatusText, &u.LastSeenAt); err != nil {
+			return nil, fmt.Errorf("scan search user: %w", err)
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+// TouchLastSeen stamps the user's last-seen time to now. Called when a user's
+// final connection drops, so an offline peer can show "last seen …".
+func (s *Store) TouchLastSeen(ctx context.Context, userID string) error {
+	if _, err := s.pool.Exec(ctx, `UPDATE users SET last_seen_at = now() WHERE id = $1`, userID); err != nil {
+		return fmt.Errorf("touch last seen: %w", err)
+	}
+	return nil
 }
 
 // UpdateProfile updates a user's editable profile fields. Display name is only

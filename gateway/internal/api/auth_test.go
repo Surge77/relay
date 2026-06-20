@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -203,6 +204,28 @@ func (f *fakeStore) SearchMessages(_ context.Context, _, _ string, _ int) ([]mod
 	return nil, nil
 }
 
+func (f *fakeStore) SearchUsers(_ context.Context, query, excludeUserID string, limit int) ([]model.User, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	q := strings.ToLower(query)
+	var out []model.User
+	for id, u := range f.byID {
+		if id == excludeUserID {
+			continue
+		}
+		if f.blocks[id+"|"+excludeUserID] || f.blocks[excludeUserID+"|"+id] {
+			continue
+		}
+		if strings.Contains(strings.ToLower(u.DisplayName), q) || strings.Contains(strings.ToLower(u.Email), q) {
+			out = append(out, u)
+			if len(out) >= limit {
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeStore) UpdateProfile(_ context.Context, userID, displayName, statusText, avatarURL string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -260,7 +283,14 @@ type sessionEnvelope struct {
 }
 
 func testServer() *Server {
-	return NewServer(newFakeStore(), []byte("test-secret-32-bytes-or-whatever"), []string{"http://localhost:3000"}, nil, nil)
+	return NewServer(newFakeStore(), []byte("test-secret-32-bytes-or-whatever"), []string{"http://localhost:3000"}, nil, nil, nil)
+}
+
+// fakePresence reports a fixed set of users as online for handler tests.
+type fakePresence struct{ online map[string]bool }
+
+func (p fakePresence) IsOnline(_ context.Context, userID string) (bool, error) {
+	return p.online[userID], nil
 }
 
 func do(t *testing.T, h http.Handler, method, path string, body any) *httptest.ResponseRecorder {

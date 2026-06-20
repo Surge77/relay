@@ -25,6 +25,7 @@ type User struct {
 	PasswordHash string
 	AvatarURL    string
 	StatusText   string
+	LastSeenAt   *time.Time // nil until the user has connected at least once
 }
 
 // RefreshToken is a stored session-refresh record. Only the hash of the opaque
@@ -57,6 +58,13 @@ type ConversationSummary struct {
 	Conversation
 	UnreadCount int64
 	LastMessage *Message
+	// Peer is the other participant in a DM (zero for channels/groups), so the
+	// client can label a direct message with a person instead of an opaque id.
+	PeerID       string
+	PeerName     string
+	PeerAvatar   string
+	PeerOnline   bool
+	PeerLastSeen *time.Time
 }
 
 // PushSubscription is a browser web-push endpoint for a user.

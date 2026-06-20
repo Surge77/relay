@@ -20,6 +20,7 @@ import (
 	"github.com/Surge77/relay/gateway/internal/api"
 	"github.com/Surge77/relay/gateway/internal/config"
 	"github.com/Surge77/relay/gateway/internal/events"
+	"github.com/Surge77/relay/gateway/internal/presence"
 	"github.com/Surge77/relay/gateway/internal/storage"
 	"github.com/Surge77/relay/gateway/internal/store"
 )
@@ -44,13 +45,17 @@ func main() {
 	}
 	defer st.Close()
 
-	// Redis is used only to publish control-plane events onto the gateway
-	// fan-out; the API holds no socket state itself.
+	// Redis publishes control-plane events onto the gateway fan-out and backs
+	// presence lookups (online dots in search/profiles); the API holds no socket
+	// state itself.
 	var publisher api.EventPublisher
+	var pres api.Presence
 	if opts, err := redis.ParseURL(cfg.RedisURL); err == nil {
-		publisher = events.NewPublisher(redis.NewClient(opts))
+		rdb := redis.NewClient(opts)
+		publisher = events.NewPublisher(rdb)
+		pres = presence.NewRedis(rdb)
 	} else {
-		log.Warn("redis url invalid; realtime events disabled", "err", err)
+		log.Warn("redis url invalid; realtime events + presence disabled", "err", err)
 	}
 
 	// Local-disk attachment storage (swap for S3 in prod). Disabled if it can't
@@ -64,7 +69,7 @@ func main() {
 	port := getEnvInt("API_PORT", 9000)
 	srv := &http.Server{
 		Addr:              ":" + strconv.Itoa(port),
-		Handler:           api.NewServer(st, cfg.JWTSecret, cfg.AllowedOrigins, publisher, blob).Routes(),
+		Handler:           api.NewServer(st, cfg.JWTSecret, cfg.AllowedOrigins, publisher, blob, pres).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

@@ -145,6 +145,7 @@ func buildProdHub(ctx context.Context, cfg *config.Config, reg *registry.Registr
 	}()
 
 	h := hub.New(reg, seq, pg, fan, durableLog, pres)
+	h.SetLastSeen(pg)
 	fan.SetDeliver(h.DeliverLocal)
 
 	cleanup := func() {

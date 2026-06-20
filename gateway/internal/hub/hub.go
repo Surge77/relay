@@ -65,6 +65,13 @@ type Persister interface {
 	Persist(ctx context.Context, m model.Message) error
 }
 
+// LastSeenToucher records when a user was last connected, for "last seen …"
+// display. Optional — set via SetLastSeen; nil disables last-seen tracking
+// (e.g. the in-memory dev hub).
+type LastSeenToucher interface {
+	TouchLastSeen(ctx context.Context, userID string) error
+}
+
 // HistoryLimit caps a single catch-up replay to bound memory and latency.
 const HistoryLimit = 500
 
@@ -76,6 +83,7 @@ type Hub struct {
 	fan      Fanout
 	persist  Persister
 	presence Presence
+	lastSeen LastSeenToucher
 }
 
 // New constructs a Hub. The Fanout implementation must be configured to call
@@ -83,6 +91,10 @@ type Hub struct {
 func New(reg *registry.Registry, seq Sequencer, store Store, fan Fanout, persist Persister, presence Presence) *Hub {
 	return &Hub{reg: reg, seq: seq, store: store, fan: fan, persist: persist, presence: presence}
 }
+
+// SetLastSeen enables "last seen" tracking, stamping a user's last-seen time
+// when their final connection drops. Optional; without it last-seen stays nil.
+func (h *Hub) SetLastSeen(t LastSeenToucher) { h.lastSeen = t }
 
 // DeliverLocal pushes a frame to every local connection subscribed to the
 // conversation. This is the callback the Fanout layer invokes for inbound

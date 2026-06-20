@@ -2,14 +2,52 @@ package api
 
 import (
 	"net/http"
+	"strings"
 	"time"
+
+	"github.com/Surge77/relay/gateway/internal/model"
 )
 
 type profileView struct {
-	ID          string `json:"id"`
-	DisplayName string `json:"display_name"`
-	AvatarURL   string `json:"avatar_url,omitempty"`
-	StatusText  string `json:"status_text,omitempty"`
+	ID          string     `json:"id"`
+	DisplayName string     `json:"display_name"`
+	AvatarURL   string     `json:"avatar_url,omitempty"`
+	StatusText  string     `json:"status_text,omitempty"`
+	Online      bool       `json:"online"`
+	LastSeenAt  *time.Time `json:"last_seen_at,omitempty"`
+}
+
+// profileOf builds a public profile view (never the email) enriched with live
+// online status. last_seen_at is shown so an offline peer reads "last seen …".
+func (s *Server) profileOf(r *http.Request, u model.User) profileView {
+	return profileView{
+		ID: u.ID, DisplayName: u.DisplayName, AvatarURL: u.AvatarURL, StatusText: u.StatusText,
+		Online: s.isOnline(r.Context(), u.ID), LastSeenAt: u.LastSeenAt,
+	}
+}
+
+// handleSearchUsers finds people by display-name/email substring so the client
+// can start a DM without knowing a raw user id. GET /users/search?q=<query>&limit=<n>.
+func (s *Server) handleSearchUsers(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if len(q) < 2 {
+		writeErr(w, http.StatusUnprocessableEntity, "INVALID_QUERY", "q must be at least 2 characters")
+		return
+	}
+	limit := parseInt(r.URL.Query().Get("limit"), defaultSearchLimit)
+	if limit <= 0 || limit > maxSearchLimit {
+		limit = defaultSearchLimit
+	}
+	users, err := s.store.SearchUsers(r.Context(), q, userIDFrom(r.Context()), int(limit))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "INTERNAL", "search failed")
+		return
+	}
+	out := make([]profileView, 0, len(users))
+	for _, u := range users {
+		out = append(out, s.profileOf(r, u))
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 type updateProfileReq struct {
@@ -29,7 +67,7 @@ func (s *Server) handleGetUser(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "NOT_FOUND", "user not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, profileView{ID: u.ID, DisplayName: u.DisplayName, AvatarURL: u.AvatarURL, StatusText: u.StatusText})
+	writeJSON(w, http.StatusOK, s.profileOf(r, u))
 }
 
 func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +86,7 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "INTERNAL", "could not load profile")
 		return
 	}
-	writeJSON(w, http.StatusOK, profileView{ID: u.ID, DisplayName: u.DisplayName, AvatarURL: u.AvatarURL, StatusText: u.StatusText})
+	writeJSON(w, http.StatusOK, s.profileOf(r, u))
 }
 
 func (s *Server) handleBlock(w http.ResponseWriter, r *http.Request) {
