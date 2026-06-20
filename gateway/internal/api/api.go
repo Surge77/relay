@@ -45,6 +45,7 @@ type DataStore interface {
 	SetLastRead(ctx context.Context, conversationID, userID string, seq int64) error
 	SearchMessages(ctx context.Context, userID, query string, limit int) ([]model.Message, error)
 
+	SearchUsers(ctx context.Context, query, excludeUserID string, limit int) ([]model.User, error)
 	UpdateProfile(ctx context.Context, userID, displayName, statusText, avatarURL string) error
 	AddBlock(ctx context.Context, blockerID, blockedID string) error
 	RemoveBlock(ctx context.Context, blockerID, blockedID string) error
@@ -72,19 +73,28 @@ type noopPublisher struct{}
 func (noopPublisher) ToConversation(context.Context, string, protocol.Frame) error { return nil }
 func (noopPublisher) ToUser(context.Context, string, protocol.Frame) error         { return nil }
 
+// Presence reports whether a user currently has a live connection, so profiles
+// and search results can show an online dot. A nil presence reports everyone
+// offline (see isOnline).
+type Presence interface {
+	IsOnline(ctx context.Context, userID string) (bool, error)
+}
+
 // Server holds the control-plane dependencies and builds the HTTP router.
 type Server struct {
-	store   DataStore
-	secret  []byte
-	origins map[string]bool
-	events  EventPublisher
-	blob    storage.Storage // nil disables attachment endpoints
+	store    DataStore
+	secret   []byte
+	origins  map[string]bool
+	events   EventPublisher
+	blob     storage.Storage // nil disables attachment endpoints
+	presence Presence        // nil reports everyone offline
 }
 
 // NewServer wires the control plane. allowedOrigins are echoed back for CORS so
 // the browser can send credentials (the refresh cookie). A nil events publisher
-// disables realtime notification; a nil blob store disables attachments.
-func NewServer(st DataStore, secret []byte, allowedOrigins []string, events EventPublisher, blob storage.Storage) *Server {
+// disables realtime notification; a nil blob store disables attachments; a nil
+// presence reports everyone offline.
+func NewServer(st DataStore, secret []byte, allowedOrigins []string, events EventPublisher, blob storage.Storage, presence Presence) *Server {
 	origins := make(map[string]bool, len(allowedOrigins))
 	for _, o := range allowedOrigins {
 		origins[o] = true
@@ -92,7 +102,17 @@ func NewServer(st DataStore, secret []byte, allowedOrigins []string, events Even
 	if events == nil {
 		events = noopPublisher{}
 	}
-	return &Server{store: st, secret: secret, origins: origins, events: events, blob: blob}
+	return &Server{store: st, secret: secret, origins: origins, events: events, blob: blob, presence: presence}
+}
+
+// isOnline reports whether a user has a live connection, tolerating a nil
+// presence backend (returns false) and any lookup error (returns false).
+func (s *Server) isOnline(ctx context.Context, userID string) bool {
+	if s.presence == nil {
+		return false
+	}
+	online, err := s.presence.IsOnline(ctx, userID)
+	return err == nil && online
 }
 
 // Routes returns the HTTP handler for the control plane.
@@ -119,6 +139,7 @@ func (s *Server) Routes() http.Handler {
 
 	mux.Handle("GET /search", s.requireAuth(http.HandlerFunc(s.handleSearch)))
 
+	mux.Handle("GET /users/search", s.requireAuth(http.HandlerFunc(s.handleSearchUsers)))
 	mux.Handle("GET /users/{id}", s.requireAuth(http.HandlerFunc(s.handleGetUser)))
 	mux.Handle("PATCH /users/me", s.requireAuth(http.HandlerFunc(s.handleUpdateProfile)))
 	mux.Handle("POST /blocks/{userId}", s.requireAuth(http.HandlerFunc(s.handleBlock)))

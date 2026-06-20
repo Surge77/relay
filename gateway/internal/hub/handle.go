@@ -60,6 +60,12 @@ func (h *Hub) goOfflineAfterGrace(userID string) {
 	if err := h.presence.Offline(ctx, userID); err == nil {
 		h.broadcastPresence(ctx, userID, protocol.StateOffline)
 	}
+	// Record last-seen off the disconnect path; a failure must never matter here.
+	if h.lastSeen != nil {
+		if err := h.lastSeen.TouchLastSeen(ctx, userID); err != nil {
+			log.Printf("touch last seen for %s: %v", userID, err)
+		}
+	}
 }
 
 // OnFrame dispatches a validated inbound frame from a client.

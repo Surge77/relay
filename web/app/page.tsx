@@ -29,6 +29,7 @@ function Chat() {
 
   const { send, sendTyping, sendRead } = useChatSocket(user.id, activeId ?? "");
   const typing = useChatStore((s) => s.typing);
+  const presence = useChatStore((s) => s.presence);
   const cursor = useChatStore((s) => (activeId ? (s.cursors[activeId] ?? 0) : 0));
 
   useEffect(() => {
@@ -73,8 +74,15 @@ function Chat() {
       <main className="flex flex-1 flex-col">
         {activeId && active ? (
           <>
-            <header className="border-b border-neutral-800 px-4 py-3 text-sm font-medium">
-              {convLabel(active)}
+            <header className="border-b border-neutral-800 px-4 py-3">
+              <div className="text-sm font-medium">{convLabel(active)}</div>
+              {active.Kind === "dm" && (
+                <div className="text-xs text-neutral-500">
+                  {(presence[active.PeerID] ?? active.PeerOnline)
+                    ? "online"
+                    : lastSeenLabel(active.PeerLastSeen)}
+                </div>
+              )}
             </header>
             <MemberRoster conversationId={activeId} me={user.id} />
             <MessageList conversation={activeId} me={user.id} />
@@ -91,4 +99,14 @@ function Chat() {
       </main>
     </div>
   );
+}
+
+// lastSeenLabel renders a coarse "last seen …" string for an offline DM peer.
+function lastSeenLabel(iso: string | null): string {
+  if (!iso) return "offline";
+  const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 60) return "last seen just now";
+  if (secs < 3600) return `last seen ${Math.floor(secs / 60)}m ago`;
+  if (secs < 86400) return `last seen ${Math.floor(secs / 3600)}h ago`;
+  return `last seen ${Math.floor(secs / 86400)}d ago`;
 }
