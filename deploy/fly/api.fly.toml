@@ -1,0 +1,42 @@
+# Fly.io config for the Relay REST control plane (the second Go service).
+# Deploy from the repo root:
+#   fly deploy gateway --config deploy/fly/api.fly.toml
+# (Build context is still ./gateway — both services share one Dockerfile, chosen
+#  by the CMD build arg below.)
+#
+# Secrets (JWT_SECRET, POSTGRES_URL, REDIS_URL, ALLOWED_ORIGINS) are NOT in this
+# file — set them with `fly secrets set` (see deploy/DEPLOY.md).
+app = "relay-api"
+primary_region = "iad"  # keep the same region as relay-gw + your DB + Redis
+
+[build]
+  dockerfile = "Dockerfile"
+  [build.args]
+    CMD = "api"
+
+[env]
+  API_PORT = "9000"
+  UPLOAD_DIR = "/data/uploads"
+
+[http_service]
+  internal_port = 9000
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    path = "/readyz"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "5s"
+
+# Attachments persist on a small volume. Without this, uploads are ephemeral
+# (lost on redeploy) — the upload endpoint still works, files just don't survive.
+[[mounts]]
+  source = "relay_uploads"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

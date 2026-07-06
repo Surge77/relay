@@ -1,0 +1,35 @@
+# Fly.io config for the Relay WebSocket gateway (one of the two Go services).
+# Deploy from the repo root:
+#   fly deploy gateway --config deploy/fly/gateway.fly.toml
+#
+# Secrets (JWT_SECRET, POSTGRES_URL, REDIS_URL, ALLOWED_ORIGINS) are NOT in this
+# file — set them with `fly secrets set` (see deploy/DEPLOY.md).
+app = "relay-gw"
+primary_region = "iad"  # pick the region closest to you / your DB + Redis
+
+[build]
+  dockerfile = "Dockerfile"   # context is ./gateway (the deploy path above)
+  [build.args]
+    CMD = "gateway"
+
+[env]
+  GATEWAY_PORT = "8080"
+  NODE_ID = "gw1"
+
+[http_service]
+  internal_port = 8080
+  force_https = true            # browsers require wss:// from an https page
+  # Persistent WebSocket connections must NOT be idled away — keep the machine up.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    path = "/healthz"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
