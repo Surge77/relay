@@ -16,7 +16,13 @@ export function AuthGate({ children }: { children: React.ReactNode }) {
   }, [setReady]);
 
   if (!ready) {
-    return <div className="grid h-screen place-items-center text-neutral-400">Loading…</div>;
+    return (
+      <div className="grid h-screen place-items-center">
+        <div className="ink-border rounded-lg bg-paper px-4 py-2 font-mono text-sm font-bold uppercase">
+          Loading…
+        </div>
+      </div>
+    );
   }
   if (!user) return <AuthForm />;
   return <>{children}</>;
@@ -45,52 +51,90 @@ function AuthForm() {
   }
 
   return (
-    <div className="grid h-screen place-items-center bg-neutral-950 text-neutral-100">
-      <form onSubmit={submit} className="w-80 space-y-3 rounded-xl border border-neutral-800 p-6">
-        <h1 className="text-lg font-semibold">
-          {mode === "login" ? "Log in to Relay" : "Create your Relay account"}
-        </h1>
-        {mode === "signup" && (
-          <input
-            className="w-full rounded-lg bg-neutral-800 px-3 py-2 text-sm"
-            placeholder="Display name"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            required
-          />
-        )}
-        <input
-          className="w-full rounded-lg bg-neutral-800 px-3 py-2 text-sm"
-          type="email"
-          placeholder="Email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-        />
-        <input
-          className="w-full rounded-lg bg-neutral-800 px-3 py-2 text-sm"
-          type="password"
-          placeholder="Password (min 8 chars)"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          required
-        />
-        {error && <p className="text-sm text-red-400">{error}</p>}
-        <button
-          type="submit"
-          disabled={busy}
-          className="w-full rounded-lg bg-blue-600 py-2 text-sm font-medium disabled:opacity-50"
-        >
-          {busy ? "…" : mode === "login" ? "Log in" : "Sign up"}
-        </button>
+    <div className="grid h-screen place-items-center px-4 text-ink">
+      <div className="w-full max-w-[400px]">
+        {/* Brand block */}
+        <div className="mb-6 flex items-end gap-3">
+          <div
+            className="grid h-14 w-14 -rotate-3 place-items-center rounded-xl bg-cobalt text-paper ink-border"
+            style={{ boxShadow: "var(--sh)" }}
+          >
+            <svg viewBox="0 0 24 24" fill="none" className="h-8 w-8">
+              <path d="M13.5 3 5 13.5h5l-1.5 7.5L18 10.5h-5L13.5 3Z" fill="currentColor" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+            </svg>
+          </div>
+          <div>
+            <h1 className="font-display text-5xl font-extrabold uppercase leading-none tracking-tight">Relay</h1>
+            <div className="mt-1.5 flex gap-1">
+              <span className="h-2 w-8 bg-tomato" />
+              <span className="h-2 w-4 bg-lime" />
+              <span className="h-2 w-5 bg-butter" />
+            </div>
+          </div>
+        </div>
+
+        <div className="card rounded-xl p-6" style={{ boxShadow: "var(--sh-lg)" }}>
+          <h2 className="mb-1 font-display text-2xl font-extrabold uppercase leading-none">
+            {mode === "login" ? "Welcome back" : "Get in"}
+          </h2>
+          <p className="mb-5 text-sm text-ash">
+            {mode === "login" ? "Pick up your conversations." : "Real-time messaging that keeps your place."}
+          </p>
+
+          <form onSubmit={submit} className="space-y-3">
+            {mode === "signup" && <Field placeholder="Display name" value={displayName} onChange={setDisplayName} required />}
+            <Field type="email" placeholder="Email" value={email} onChange={setEmail} required />
+            <Field type="password" placeholder="Password (min 8 chars)" value={password} onChange={setPassword} required />
+            {error && (
+              <p className="ink-border rounded-md bg-tomato px-3 py-2 text-sm font-bold text-paper">{error}</p>
+            )}
+            <button
+              type="submit"
+              disabled={busy}
+              className="btn w-full rounded-lg bg-cobalt py-3 text-sm font-extrabold uppercase tracking-wide text-paper disabled:opacity-60"
+            >
+              {busy ? "…" : mode === "login" ? "Log in" : "Create account"}
+            </button>
+          </form>
+        </div>
+
         <button
           type="button"
-          className="w-full text-xs text-neutral-400 hover:text-neutral-200"
+          className="mt-5 w-full text-center text-sm font-medium text-ash hover:text-ink"
           onClick={() => setMode(mode === "login" ? "signup" : "login")}
         >
-          {mode === "login" ? "Need an account? Sign up" : "Have an account? Log in"}
+          {mode === "login" ? (
+            <>Need an account? <span className="font-extrabold text-cobalt underline decoration-2 underline-offset-2">Sign up</span></>
+          ) : (
+            <>Have an account? <span className="font-extrabold text-cobalt underline decoration-2 underline-offset-2">Log in</span></>
+          )}
         </button>
-      </form>
+      </div>
     </div>
+  );
+}
+
+function Field({
+  type = "text",
+  placeholder,
+  value,
+  onChange,
+  required,
+}: {
+  type?: string;
+  placeholder: string;
+  value: string;
+  onChange: (v: string) => void;
+  required?: boolean;
+}) {
+  return (
+    <input
+      className="card-flat w-full rounded-lg px-3.5 py-2.5 text-sm font-medium text-ink outline-none placeholder:text-ash focus:shadow-[var(--sh-sm)]"
+      type={type}
+      placeholder={placeholder}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      required={required}
+    />
   );
 }

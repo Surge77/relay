@@ -3,12 +3,12 @@
 import { useState } from "react";
 import { useConvStore } from "@/lib/conversations";
 import { useUserSearch, type SearchUser } from "@/lib/users";
+import { hueFor } from "@/lib/hue";
 
 type Mode = "dm" | "group" | "channel";
 
 // NewChat is the single entry point for starting a conversation: a direct
 // message (find a person), a group (name + pick people), or a channel (name).
-// People are found by name/email so no raw user id is ever needed.
 export function NewChat() {
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<Mode>("dm");
@@ -17,31 +17,34 @@ export function NewChat() {
     return (
       <button
         onClick={() => setOpen(true)}
-        className="mb-1 rounded-lg border border-dashed border-neutral-700 px-3 py-1.5 text-xs text-neutral-400 hover:text-neutral-200"
+        className="btn flex w-full items-center justify-center gap-2 rounded-lg bg-lime px-3 py-2.5 text-sm font-extrabold uppercase tracking-wide text-ink"
       >
-        + New chat
+        <span className="text-lg leading-none">+</span> New conversation
       </button>
     );
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 p-4 pt-24">
-      <div className="w-full max-w-md rounded-xl border border-neutral-800 bg-neutral-950 p-4 shadow-xl">
-        <div className="mb-3 flex items-center justify-between">
-          <div className="flex gap-1">
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-ink/40 p-4 pt-24">
+      <div className="card w-full max-w-md rounded-xl p-5" style={{ boxShadow: "var(--sh-lg)" }}>
+        <div className="mb-4 flex items-center justify-between">
+          <div className="ink-border flex gap-0 overflow-hidden rounded-lg">
             {(["dm", "group", "channel"] as const).map((m) => (
               <button
                 key={m}
                 onClick={() => setMode(m)}
-                className={`rounded-md px-2.5 py-1 text-xs capitalize ${
-                  mode === m ? "bg-neutral-700" : "bg-neutral-900 text-neutral-400"
+                className={`border-r-2 border-ink px-3 py-1.5 text-xs font-bold uppercase tracking-wide last:border-r-0 ${
+                  mode === m ? "bg-cobalt text-paper" : "bg-paper text-ink hover:bg-bone"
                 }`}
               >
                 {m === "dm" ? "Direct" : m}
               </button>
             ))}
           </div>
-          <button onClick={() => setOpen(false)} className="text-neutral-500 hover:text-neutral-200">
+          <button
+            onClick={() => setOpen(false)}
+            className="btn grid h-8 w-8 place-items-center rounded-lg bg-paper text-ink hover:bg-tomato hover:text-paper"
+          >
             ✕
           </button>
         </div>
@@ -70,9 +73,9 @@ function NewDM({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2.5">
       <PeopleInput value={query} onChange={setQuery} busy={busy} placeholder="Search people by name or email" />
-      {err && <div className="text-xs text-red-400">{err}</div>}
+      {err && <ErrLine msg={err} />}
       <PeopleResults results={results} query={query} busy={busy} onPick={start} />
     </div>
   );
@@ -105,21 +108,15 @@ function NewGroup({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <div className="space-y-2">
-      <input
-        autoFocus
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        placeholder="Group name"
-        className="w-full rounded-md bg-neutral-800 px-2 py-1.5 text-sm outline-none"
-      />
+    <div className="space-y-2.5">
+      <TextField value={name} onChange={setName} placeholder="Group name" autoFocus />
       {picked.length > 0 && (
-        <div className="flex flex-wrap gap-1">
+        <div className="flex flex-wrap gap-1.5">
           {picked.map((u) => (
             <button
               key={u.id}
               onClick={() => toggle(u)}
-              className="rounded-full bg-neutral-700 px-2 py-0.5 text-xs hover:bg-neutral-600"
+              className="ink-border rounded-md bg-lilac px-2 py-0.5 text-xs font-bold text-ink"
             >
               {u.display_name} ✕
             </button>
@@ -134,14 +131,12 @@ function NewGroup({ onDone }: { onDone: () => void }) {
         selectedIds={new Set(picked.map((u) => u.id))}
         onPick={toggle}
       />
-      {err && <div className="text-xs text-red-400">{err}</div>}
-      <button
+      {err && <ErrLine msg={err} />}
+      <PrimaryButton
         onClick={submit}
         disabled={!name.trim() || saving}
-        className="w-full rounded-md bg-blue-600 px-2 py-1.5 text-sm font-medium disabled:opacity-40"
-      >
-        {saving ? "Creating…" : `Create group${picked.length ? ` with ${picked.length}` : ""}`}
-      </button>
+        label={saving ? "Creating…" : `Create group${picked.length ? ` with ${picked.length}` : ""}`}
+      />
     </div>
   );
 }
@@ -168,24 +163,56 @@ function NewChannel({ onDone }: { onDone: () => void }) {
   };
 
   return (
-    <div className="space-y-2">
-      <input
-        autoFocus
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => e.key === "Enter" && submit()}
-        placeholder="Channel name"
-        className="w-full rounded-md bg-neutral-800 px-2 py-1.5 text-sm outline-none"
-      />
-      {err && <div className="text-xs text-red-400">{err}</div>}
-      <button
+    <div className="space-y-2.5">
+      <TextField value={name} onChange={setName} placeholder="Channel name" autoFocus onEnter={submit} />
+      {err && <ErrLine msg={err} />}
+      <PrimaryButton
         onClick={submit}
         disabled={!name.trim() || saving}
-        className="w-full rounded-md bg-blue-600 px-2 py-1.5 text-sm font-medium disabled:opacity-40"
-      >
-        {saving ? "Creating…" : "Create channel"}
-      </button>
+        label={saving ? "Creating…" : "Create channel"}
+      />
     </div>
+  );
+}
+
+function ErrLine({ msg }: { msg: string }) {
+  return <div className="ink-border rounded-md bg-tomato px-2 py-1 text-xs font-bold text-paper">{msg}</div>;
+}
+
+function TextField({
+  value,
+  onChange,
+  placeholder,
+  autoFocus,
+  onEnter,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+  autoFocus?: boolean;
+  onEnter?: () => void;
+}) {
+  return (
+    <input
+      autoFocus={autoFocus}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => e.key === "Enter" && onEnter?.()}
+      placeholder={placeholder}
+      className="card-flat w-full rounded-lg px-3 py-2.5 text-sm text-ink outline-none placeholder:text-ash focus:shadow-[var(--sh-sm)]"
+    />
+  );
+}
+
+function PrimaryButton({ onClick, disabled, label }: { onClick: () => void; disabled: boolean; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="btn w-full rounded-lg bg-cobalt py-2.5 text-sm font-extrabold uppercase tracking-wide text-paper disabled:opacity-40"
+    >
+      {label}
+    </button>
   );
 }
 
@@ -206,9 +233,9 @@ function PeopleInput({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="w-full rounded-md bg-neutral-800 px-2 py-1.5 text-sm outline-none"
+        className="card-flat w-full rounded-lg px-3 py-2.5 text-sm text-ink outline-none placeholder:text-ash focus:shadow-[var(--sh-sm)]"
       />
-      {busy && <span className="absolute right-2 top-2 text-xs text-neutral-500">…</span>}
+      {busy && <span className="absolute right-3 top-3 font-mono text-xs text-ash">…</span>}
     </div>
   );
 }
@@ -228,23 +255,23 @@ function PeopleResults({
 }) {
   if (query.trim().length < 2) return null;
   if (!busy && results.length === 0) {
-    return <div className="px-2 py-2 text-xs text-neutral-600">No people found</div>;
+    return <div className="px-1 py-2 text-xs font-medium text-ash">No people found</div>;
   }
   return (
-    <ul className="max-h-56 overflow-y-auto">
+    <ul className="max-h-56 space-y-1 overflow-y-auto">
       {results.map((u) => {
         const selected = selectedIds?.has(u.id) ?? false;
         return (
           <li key={u.id}>
             <button
               onClick={() => onPick(u)}
-              className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-neutral-800 ${
-                selected ? "bg-neutral-800" : ""
+              className={`flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm ${
+                selected ? "ink-border bg-lime" : "hover:bg-bone"
               }`}
             >
-              <Avatar name={u.display_name} online={u.online} />
-              <span className="min-w-0 flex-1 truncate">{u.display_name}</span>
-              {selected && <span className="text-xs text-blue-400">✓</span>}
+              <Avatar name={u.display_name} online={u.online} id={u.id} />
+              <span className="min-w-0 flex-1 truncate font-medium text-ink">{u.display_name}</span>
+              {selected && <span className="font-bold text-ink">✓</span>}
             </button>
           </li>
         );
@@ -253,15 +280,19 @@ function PeopleResults({
   );
 }
 
-// Avatar renders a name initial in a circle with an online dot overlay.
-export function Avatar({ name, online }: { name: string; online: boolean }) {
+// Avatar — a colour-coded, ink-bordered tile with the person's initial and an
+// online flag. The colour is derived from the id, so a person looks the same
+// everywhere they appear.
+export function Avatar({ name, online, id }: { name: string; online: boolean; id?: string }) {
+  const hue = hueFor(id ?? name);
   return (
-    <span className="relative inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-neutral-700 text-xs">
+    <span
+      className="relative inline-grid h-9 w-9 shrink-0 place-items-center rounded-lg text-sm font-extrabold ink-border"
+      style={{ background: hue.fill, color: hue.on }}
+    >
       {(name.trim()[0] ?? "?").toUpperCase()}
       <span
-        className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-neutral-950 ${
-          online ? "bg-green-500" : "bg-neutral-600"
-        }`}
+        className={`absolute -bottom-1 -right-1 h-3 w-3 rounded-full ink-border ${online ? "bg-mint" : "bg-bone"}`}
         title={online ? "online" : "offline"}
       />
     </span>
