@@ -31,7 +31,7 @@ jobs:
       REDIS_URL: redis://localhost:6379
       JWT_SECRET: ci-test-secret
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-go@v5
         with:
           go-version: "1.26"
@@ -51,7 +51,7 @@ jobs:
   web:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: "lts/*"
@@ -71,7 +71,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Validate compose
         working-directory: deploy
         env:
